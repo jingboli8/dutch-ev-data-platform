@@ -30,15 +30,26 @@ FROM analytics.ev_metrics
 ORDER BY vehicle_count DESC, brand, model
 LIMIT 50;
 
--- Incremental ingestion audit.
+-- Resumable snapshot ingestion audit (not a source-incremental load).
 SELECT
     ingestion_id,
+    ingestion_mode,
+    requested_limit,
     started_at,
     completed_at,
     status,
+    page_size,
+    pages_requested,
+    source_rows_received,
     vehicle_rows,
     fuel_rows,
-    duplicate_payloads
+    rejected_rows,
+    duplicate_payloads,
+    active_duration_seconds,
+    wall_clock_elapsed_seconds,
+    processed_rows_per_second,
+    checkpoint_status,
+    resumed,
+    resume_count
 FROM meta.ingestion_runs
 ORDER BY started_at DESC;
-

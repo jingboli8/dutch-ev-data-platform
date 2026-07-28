@@ -31,12 +31,14 @@ def _project_path(value: str) -> Path:
 class Settings:
     vehicle_url: str
     fuel_url: str
-    sample_limit: int
+    snapshot_limit: int | None
     page_size: int
+    detail_batch_size: int
     request_timeout_seconds: int
     max_retries: int
     data_dir: Path
     database_path: Path
+    state_dir: Path
     log_level: str
     hash_salt: str | None
 
@@ -49,8 +51,8 @@ class Settings:
         return self.data_dir / "parquet"
 
     @property
-    def state_dir(self) -> Path:
-        return PROJECT_ROOT / ".state"
+    def checkpoint_path(self) -> Path:
+        return self.state_dir / "checkpoints" / "rdw_ev_snapshot.json"
 
     @classmethod
     def load(cls, config_path: Path | None = None) -> "Settings":
@@ -61,11 +63,17 @@ class Settings:
         api = config["api"]
         paths = config["paths"]
         logging_config = config["logging"]
+        configured_limit = int(
+            os.getenv("EV_SNAPSHOT_LIMIT", api["snapshot_limit"])
+        )
         return cls(
             vehicle_url=os.getenv("EV_VEHICLE_URL", api["vehicle_url"]),
             fuel_url=os.getenv("EV_FUEL_URL", api["fuel_url"]),
-            sample_limit=int(os.getenv("EV_SAMPLE_LIMIT", api["sample_limit"])),
+            snapshot_limit=configured_limit if configured_limit > 0 else None,
             page_size=int(os.getenv("EV_API_PAGE_SIZE", api["page_size"])),
+            detail_batch_size=int(
+                os.getenv("EV_DETAIL_BATCH_SIZE", api["detail_batch_size"])
+            ),
             request_timeout_seconds=int(
                 os.getenv("EV_REQUEST_TIMEOUT_SECONDS", api["request_timeout_seconds"])
             ),
@@ -74,7 +82,9 @@ class Settings:
             database_path=_project_path(
                 os.getenv("EV_DATABASE_PATH", paths["database_path"])
             ),
+            state_dir=_project_path(
+                os.getenv("EV_STATE_DIR", paths["state_dir"])
+            ),
             log_level=os.getenv("EV_LOG_LEVEL", logging_config["level"]).upper(),
             hash_salt=os.getenv("EV_HASH_SALT"),
         )
-
