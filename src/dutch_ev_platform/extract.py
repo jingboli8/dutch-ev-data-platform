@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 import logging
 import time
 from typing import Any
@@ -29,14 +29,16 @@ class RDWClient:
         self.settings = settings
         self.session = session or requests.Session()
         self.sleep = sleep
+        self.request_count = 0
         self.session.headers.update(
-            {"User-Agent": "dutch-ev-data-platform/0.1 (portfolio project)"}
+            {"User-Agent": "dutch-ev-data-platform/0.2 (portfolio project)"}
         )
 
     def _get(self, url: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         last_error: Exception | None = None
         for attempt in range(1, self.settings.max_retries + 1):
             try:
+                self.request_count += 1
                 response = self.session.get(
                     url, params=params, timeout=self.settings.request_timeout_seconds
                 )
@@ -55,71 +57,83 @@ class RDWClient:
                 )
                 if attempt < self.settings.max_retries:
                     self.sleep(2 ** (attempt - 1))
-        raise ExtractionError(f"RDW request failed after retries: {last_error}") from last_error
+        # Request exception strings can contain the fully rendered query URL,
+        # including licence plates used by matching detail requests. Suppress
+        # both that text and the chained exception before structured logging.
+        raise ExtractionError(
+            "RDW request failed after retries; request details suppressed for privacy"
+        ) from None
 
-    def fetch_vehicle_sample(self, limit: int) -> list[dict[str, Any]]:
-        fields = (
-            "kenteken,merk,handelsbenaming,datum_eerste_toelating,"
-            "eerste_kleur,tweede_kleur,voertuigsoort"
-        )
+    @staticmethod
+    def _quote(value: str) -> str:
+        return f"'{value.replace(chr(39), chr(39) * 2)}'"
+
+    @staticmethod
+    def batches(values: Iterable[str], size: int) -> Iterator[list[str]]:
+        batch: list[str] = []
+        for value in values:
+            if value:
+                batch.append(value)
+            if len(batch) == size:
+                yield batch
+                batch = []
+        if batch:
+            yield batch
+
+    def fetch_ev_identifier_page(
+        self, limit: int, after_identifier: str | None = None
+    ) -> list[dict[str, Any]]:
+        fuel_filter = "brandstof_omschrijving in ('Elektriciteit','Waterstof')"
+        where = fuel_filter
+        if after_identifier is not None:
+            where = f"({fuel_filter}) AND kenteken > {self._quote(after_identifier)}"
         return self._get(
-            self.settings.vehicle_url,
-            {"$select": fields, "$limit": limit, "$order": "kenteken"},
-        )
-
-    def fetch_ev_identifier_sample(self, limit: int) -> list[str]:
-        rows = self._get(
             self.settings.fuel_url,
             {
                 "$select": "kenteken",
-                "$where": "brandstof_omschrijving in ('Elektriciteit','Waterstof')",
+                "$where": where,
+                "$group": "kenteken",
                 "$limit": limit,
                 "$order": "kenteken",
             },
         )
-        return [
-            str(row.get("kenteken", "")).strip()
-            for row in rows
-            if row.get("kenteken")
-        ]
 
-    def fetch_vehicles_by_ids(
-        self, vehicle_ids: Iterable[str], chunk_size: int = 50
-    ) -> list[dict[str, Any]]:
+    def fetch_vehicle_pages(
+        self, vehicle_ids: Iterable[str]
+    ) -> Iterator[list[dict[str, Any]]]:
         identifiers = sorted({value for value in vehicle_ids if value})
         fields = (
             "kenteken,merk,handelsbenaming,datum_eerste_toelating,"
             "eerste_kleur,tweede_kleur,voertuigsoort"
         )
-        rows: list[dict[str, Any]] = []
-        for start in range(0, len(identifiers), chunk_size):
-            chunk = identifiers[start : start + chunk_size]
-            quoted = ",".join(
-                f"'{value.replace(chr(39), chr(39) * 2)}'" for value in chunk
-            )
-            rows.extend(
-                self._get(
+        for chunk in self.batches(identifiers, self.settings.detail_batch_size):
+            quoted = ",".join(self._quote(value) for value in chunk)
+            offset = 0
+            while True:
+                rows = self._get(
                     self.settings.vehicle_url,
                     {
                         "$select": fields,
                         "$where": f"kenteken in ({quoted})",
                         "$limit": self.settings.page_size,
+                        "$offset": offset,
                         "$order": "kenteken",
                     },
                 )
-            )
-        return rows
+                yield rows
+                if len(rows) < self.settings.page_size:
+                    break
+                offset += self.settings.page_size
 
-    def fetch_fuels_for_vehicles(
-        self, vehicle_ids: Iterable[str], chunk_size: int = 50
-    ) -> list[dict[str, Any]]:
+    def fetch_fuel_pages(
+        self, vehicle_ids: Iterable[str]
+    ) -> Iterator[list[dict[str, Any]]]:
         identifiers = sorted({value for value in vehicle_ids if value})
-        rows: list[dict[str, Any]] = []
-        for start in range(0, len(identifiers), chunk_size):
-            chunk = identifiers[start : start + chunk_size]
-            quoted = ",".join(f"'{value.replace(chr(39), chr(39) * 2)}'" for value in chunk)
-            rows.extend(
-                self._get(
+        for chunk in self.batches(identifiers, self.settings.detail_batch_size):
+            quoted = ",".join(self._quote(value) for value in chunk)
+            offset = 0
+            while True:
+                rows = self._get(
                     self.settings.fuel_url,
                     {
                         "$select": (
@@ -129,8 +143,11 @@ class RDWClient:
                         ),
                         "$where": f"kenteken in ({quoted})",
                         "$limit": self.settings.page_size,
+                        "$offset": offset,
                         "$order": "kenteken,brandstof_volgnummer",
                     },
                 )
-            )
-        return rows
+                yield rows
+                if len(rows) < self.settings.page_size:
+                    break
+                offset += self.settings.page_size

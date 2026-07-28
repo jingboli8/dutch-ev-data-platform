@@ -15,7 +15,19 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
             "message": record.getMessage(),
         }
-        for key in ("event", "ingestion_id", "dataset", "row_count", "path"):
+        for key in (
+            "event",
+            "ingestion_id",
+            "dataset",
+            "row_count",
+            "page_number",
+            "pages_requested",
+            "active_duration_seconds",
+            "wall_clock_elapsed_seconds",
+            "processed_rows_per_second",
+            "checkpoint_status",
+            "resumed",
+        ):
             if hasattr(record, key):
                 payload[key] = getattr(record, key)
         if record.exc_info:
@@ -30,4 +42,3 @@ def configure_logging(level: str = "INFO") -> None:
     root.handlers.clear()
     root.addHandler(handler)
     root.setLevel(level)
-

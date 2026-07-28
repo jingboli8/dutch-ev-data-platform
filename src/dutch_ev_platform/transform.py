@@ -103,15 +103,7 @@ def _register_rows(
     connection.register(view_name, frame)
 
 
-def build_models(
-    connection: duckdb.DuckDBPyConnection,
-    vehicles: list[dict[str, Any]],
-    fuels: list[dict[str, Any]],
-) -> None:
-    if not vehicles:
-        raise DataQualityError("No valid vehicle rows remained after normalization")
-    _register_rows(connection, "incoming_vehicles", vehicles)
-    _register_rows(connection, "incoming_fuels", fuels)
+def initialize_model_tables(connection: duckdb.DuckDBPyConnection) -> None:
     connection.execute("CREATE SCHEMA IF NOT EXISTS staging")
     connection.execute("CREATE SCHEMA IF NOT EXISTS analytics")
     connection.execute(
@@ -151,6 +143,21 @@ def build_models(
         ALTER COLUMN hybrid_class SET DATA TYPE VARCHAR
         """
     )
+
+
+def clear_staging(connection: duckdb.DuckDBPyConnection) -> None:
+    connection.execute("DELETE FROM staging.fuels")
+    connection.execute("DELETE FROM staging.vehicles")
+
+
+def upsert_staging_page(
+    connection: duckdb.DuckDBPyConnection,
+    vehicles: list[dict[str, Any]],
+    fuels: list[dict[str, Any]],
+) -> None:
+    if not vehicles:
+        raise DataQualityError("No valid vehicle rows remained after normalization")
+    _register_rows(connection, "incoming_vehicles", vehicles)
     connection.execute(
         """
         DELETE FROM staging.vehicles
@@ -160,6 +167,7 @@ def build_models(
     )
     connection.execute("INSERT INTO staging.vehicles SELECT * FROM incoming_vehicles")
     if fuels:
+        _register_rows(connection, "incoming_fuels", fuels)
         connection.execute(
             """
             DELETE FROM staging.fuels
@@ -169,6 +177,9 @@ def build_models(
             """
         )
         connection.execute("INSERT INTO staging.fuels SELECT * FROM incoming_fuels")
+
+
+def build_analytics(connection: duckdb.DuckDBPyConnection) -> None:
     connection.execute(
         """
         CREATE OR REPLACE TABLE analytics.ev_vehicles AS
@@ -232,6 +243,17 @@ def build_models(
     )
 
 
+def build_models(
+    connection: duckdb.DuckDBPyConnection,
+    vehicles: list[dict[str, Any]],
+    fuels: list[dict[str, Any]],
+) -> None:
+    """Backward-compatible one-page model build used by focused unit tests."""
+    initialize_model_tables(connection)
+    upsert_staging_page(connection, vehicles, fuels)
+    build_analytics(connection)
+
+
 def run_quality_checks(connection: duckdb.DuckDBPyConnection) -> dict[str, int]:
     ev_row_count = connection.execute(
         "SELECT count(*) FROM analytics.ev_vehicles"
@@ -258,8 +280,15 @@ def run_quality_checks(connection: duckdb.DuckDBPyConnection) -> dict[str, int]:
         "plain_identifier_columns": connection.execute(
             """
             SELECT count(*) FROM information_schema.columns
-            WHERE table_schema = 'analytics'
+            WHERE table_schema IN ('staging', 'analytics')
               AND lower(column_name) IN ('kenteken', 'licence_plate', 'license_plate')
+            """
+        ).fetchone()[0],
+        "invalid_vehicle_hashes": connection.execute(
+            """
+            SELECT count(*) FROM staging.vehicles
+            WHERE length(vehicle_id_hash) != 64
+               OR vehicle_id_hash !~ '^[0-9a-f]{64}$'
             """
         ).fetchone()[0],
         "invalid_registration_years": connection.execute(

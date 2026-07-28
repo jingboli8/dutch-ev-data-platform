@@ -12,12 +12,14 @@ def settings(tmp_path: Path) -> Settings:
     return Settings(
         vehicle_url="https://example.test/vehicles",
         fuel_url="https://example.test/fuels",
-        sample_limit=2,
-        page_size=100,
+        snapshot_limit=2,
+        page_size=2,
+        detail_batch_size=2,
         request_timeout_seconds=1,
         max_retries=1,
         data_dir=tmp_path / "data",
         database_path=tmp_path / "data" / "warehouse.duckdb",
+        state_dir=tmp_path / ".state",
         log_level="INFO",
         hash_salt="test-only-salt",
     )
