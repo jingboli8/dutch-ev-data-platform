@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 import hashlib
 import json
 import logging
-from pathlib import Path
 import time
 import uuid
+from datetime import datetime
+from pathlib import Path
+from typing import Callable
 
 import duckdb
 
@@ -18,6 +19,12 @@ from .checkpoint import (
     assert_checkpoint_compatible,
 )
 from .config import Settings
+from .dbt_orchestration import (
+    clear_generated_parquet,
+    export_dbt_parquet,
+    inspect_dbt_outputs,
+    run_dbt_build,
+)
 from .extract import ExtractionError, RDWClient
 from .storage import (
     get_hash_salt,
@@ -28,16 +35,15 @@ from .storage import (
 )
 from .transform import (
     DataQualityError,
-    build_analytics,
     clear_staging,
-    export_parquet,
+    drop_known_analytical_relations,
     initialize_model_tables,
     normalize_fuel_rows,
     normalize_vehicle_rows,
-    run_quality_checks,
+    run_staging_quality_checks,
     upsert_staging_page,
+    validate_staging_schema,
 )
-
 
 LOGGER = logging.getLogger(__name__)
 ANCHOR_DATASET = "ev_identifiers"
@@ -171,12 +177,13 @@ def _create_run(
 def _initialize_fresh_snapshot(
     connection: duckdb.DuckDBPyConnection,
     checkpoint: SnapshotCheckpoint,
+    settings: Settings,
 ) -> None:
     """Atomically replace the current warehouse snapshot and run record."""
     connection.execute("BEGIN TRANSACTION")
     try:
         clear_staging(connection)
-        build_analytics(connection)
+        drop_known_analytical_relations(connection)
         connection.execute(
             "DELETE FROM meta.ingestion_runs WHERE ingestion_id = ?",
             [checkpoint.ingestion_id],
@@ -186,6 +193,7 @@ def _initialize_fresh_snapshot(
     except BaseException:
         connection.execute("ROLLBACK")
         raise
+    clear_generated_parquet(settings.parquet_dir)
 
 
 def _update_run(
@@ -198,7 +206,11 @@ def _update_run(
     wall_clock_elapsed = _wall_clock_elapsed_seconds(checkpoint)
     processed = checkpoint.matched_vehicles + checkpoint.fuel_rows
     throughput = processed / duration if duration > 0 else 0.0
-    completed_at = utc_now() if status in {"succeeded", "interrupted"} else None
+    completed_at = (
+        utc_now()
+        if status in {"succeeded", "interrupted", "transformation_failed"}
+        else None
+    )
     connection.execute(
         """
         UPDATE meta.ingestion_runs
@@ -236,7 +248,8 @@ def _result(
     checkpoint: SnapshotCheckpoint,
     settings: Settings,
     quality_checks: dict[str, int],
-    ev_rows: int,
+    relation_counts: dict[str, int],
+    dbt_duration_seconds: float,
 ) -> dict[str, object]:
     duration = checkpoint.active_duration_seconds
     wall_clock_elapsed = _wall_clock_elapsed_seconds(checkpoint)
@@ -253,7 +266,9 @@ def _result(
         "fuel_rows": checkpoint.fuel_rows,
         "rejected_rows": checkpoint.rejected_rows,
         "duplicate_payloads": checkpoint.duplicate_payloads,
-        "ev_rows": ev_rows,
+        "ev_rows": relation_counts["fact_vehicle_snapshot"],
+        "dbt_model_rows": relation_counts,
+        "dbt_duration_seconds": round(dbt_duration_seconds, 3),
         "processed_rows": processed,
         "active_duration_seconds": round(duration, 3),
         "wall_clock_elapsed_seconds": round(wall_clock_elapsed, 3),
@@ -268,12 +283,60 @@ def _result(
     }
 
 
+def run_transform_only(
+    settings: Settings,
+    *,
+    dbt_executor: Callable[[Settings], float] | None = None,
+) -> dict[str, object]:
+    """Migrate or rebuild dbt models from an existing privacy-safe staging layer."""
+    if not settings.database_path.exists():
+        raise DataQualityError(
+            "Transform-only mode requires an existing DuckDB warehouse"
+        )
+    connection: duckdb.DuckDBPyConnection | None = duckdb.connect(
+        str(settings.database_path)
+    )
+    try:
+        validate_staging_schema(connection)
+        quality_checks = run_staging_quality_checks(connection)
+        initialize_metadata(connection)
+        drop_known_analytical_relations(connection)
+        clear_generated_parquet(settings.parquet_dir)
+        connection.close()
+        connection = None
+
+        try:
+            dbt_duration_seconds = (dbt_executor or run_dbt_build)(settings)
+            connection = duckdb.connect(str(settings.database_path))
+            relation_counts = inspect_dbt_outputs(connection)
+            parquet_files = export_dbt_parquet(
+                connection, settings.parquet_dir
+            )
+        except Exception:
+            if connection is None:
+                connection = duckdb.connect(str(settings.database_path))
+            drop_known_analytical_relations(connection)
+            raise
+        return {
+            "mode": "transform_only",
+            "database_path": str(settings.database_path),
+            "dbt_duration_seconds": round(dbt_duration_seconds, 3),
+            "dbt_model_rows": relation_counts,
+            "parquet_files": parquet_files,
+            "quality_checks": quality_checks,
+        }
+    finally:
+        if connection is not None:
+            connection.close()
+
+
 def run_pipeline(
     settings: Settings,
     client: RDWClient | None = None,
     *,
     resume: bool = False,
     fresh: bool = False,
+    dbt_executor: Callable[[Settings], float] | None = None,
 ) -> dict[str, object]:
     """Run or resume one bounded-memory RDW EV snapshot."""
     if resume == fresh:
@@ -286,7 +349,7 @@ def run_pipeline(
     salt = get_hash_salt(settings)
     configuration_sha256 = _configuration_sha256(settings, salt)
     checkpoint_store = CheckpointStore(settings.checkpoint_path)
-    completed_checkpoint = False
+    ingestion_ready = False
 
     if resume:
         checkpoint = checkpoint_store.load()
@@ -296,7 +359,11 @@ def run_pipeline(
             settings.page_size,
             configuration_sha256,
         )
-        completed_checkpoint = checkpoint.status == "completed"
+        ingestion_ready = checkpoint.status in {
+            "staging_complete",
+            "transformation_failed",
+            "completed",
+        }
 
     settings.database_path.parent.mkdir(parents=True, exist_ok=True)
     connection = duckdb.connect(str(settings.database_path))
@@ -307,21 +374,25 @@ def run_pipeline(
     try:
         if resume:
             if checkpoint.status == "initializing":
-                _initialize_fresh_snapshot(connection, checkpoint)
+                _initialize_fresh_snapshot(connection, checkpoint, settings)
                 checkpoint.status = "in_progress"
                 checkpoint_store.save(checkpoint)
-            elif not completed_checkpoint:
+            elif not ingestion_ready:
                 checkpoint.status = "in_progress"
             checkpoint.resumed = True
             checkpoint.resume_count += 1
             connection.execute(
                 """
                 UPDATE meta.ingestion_runs
-                SET completed_at = NULL, status = 'running', error_message = NULL,
+                SET completed_at = NULL, status = ?, error_message = NULL,
                     resumed = true, resume_count = ?
                 WHERE ingestion_id = ?
                 """,
-                [checkpoint.resume_count, checkpoint.ingestion_id],
+                [
+                    "transforming" if ingestion_ready else "running",
+                    checkpoint.resume_count,
+                    checkpoint.ingestion_id,
+                ],
             )
         else:
             started_at = utc_now()
@@ -334,7 +405,7 @@ def run_pipeline(
             )
             checkpoint.status = "initializing"
             checkpoint_store.save(checkpoint)
-            _initialize_fresh_snapshot(connection, checkpoint)
+            _initialize_fresh_snapshot(connection, checkpoint, settings)
             checkpoint.status = "in_progress"
             checkpoint_store.save(checkpoint)
     except BaseException:
@@ -357,7 +428,7 @@ def run_pipeline(
                 "resumed": checkpoint.resumed,
             },
         )
-        while not completed_checkpoint:
+        while not ingestion_ready:
             if (
                 checkpoint.requested_limit is not None
                 and checkpoint.matched_vehicles >= checkpoint.requested_limit
@@ -501,13 +572,9 @@ def run_pipeline(
 
         if checkpoint.matched_vehicles == 0:
             raise DataQualityError("The RDW snapshot returned no matching vehicles")
-        build_analytics(connection)
-        quality_checks = run_quality_checks(connection)
-        export_parquet(connection, settings.parquet_dir)
-        ev_rows = connection.execute(
-            "SELECT count(*) FROM analytics.ev_vehicles"
-        ).fetchone()[0]
-        checkpoint.status = "completed"
+        quality_checks = run_staging_quality_checks(connection)
+        drop_known_analytical_relations(connection)
+        checkpoint.status = "staging_complete"
         checkpoint.pages_requested = base_requests + (
             getattr(rdw, "request_count", 0) - initial_client_requests
         )
@@ -515,14 +582,35 @@ def run_pipeline(
             time.perf_counter() - invocation_started
         )
         checkpoint_store.save(checkpoint)
+        _update_run(connection, checkpoint, "transforming")
+        connection.close()
+        connection = None
+
+        dbt_duration_seconds = (dbt_executor or run_dbt_build)(settings)
+
+        connection = duckdb.connect(str(settings.database_path))
+        relation_counts = inspect_dbt_outputs(connection)
+        export_dbt_parquet(connection, settings.parquet_dir)
+        _update_run(connection, checkpoint, "finalizing")
+        checkpoint.status = "completed"
+        checkpoint.active_duration_seconds = base_duration + (
+            time.perf_counter() - invocation_started
+        )
+        checkpoint_store.save(checkpoint)
         _update_run(connection, checkpoint, "succeeded")
-        result = _result(checkpoint, settings, quality_checks, ev_rows)
+        result = _result(
+            checkpoint,
+            settings,
+            quality_checks,
+            relation_counts,
+            dbt_duration_seconds,
+        )
         LOGGER.info(
             "Snapshot pipeline completed",
             extra={
                 "event": "pipeline_success",
                 "ingestion_id": checkpoint.ingestion_id,
-                "row_count": ev_rows,
+                "row_count": relation_counts["fact_vehicle_snapshot"],
                 "pages_requested": checkpoint.pages_requested,
                 "active_duration_seconds": result["active_duration_seconds"],
                 "wall_clock_elapsed_seconds": result[
@@ -537,7 +625,12 @@ def run_pipeline(
         )
         return result
     except Exception as exc:
-        checkpoint.status = "interrupted"
+        checkpoint.status = (
+            "transformation_failed"
+            if checkpoint.status
+            in {"staging_complete", "transformation_failed", "completed"}
+            else "interrupted"
+        )
         checkpoint.pages_requested = base_requests + (
             getattr(rdw, "request_count", 0) - initial_client_requests
         )
@@ -545,8 +638,20 @@ def run_pipeline(
             time.perf_counter() - invocation_started
         )
         checkpoint_store.save(checkpoint)
+        if connection is None:
+            connection = duckdb.connect(str(settings.database_path))
+            initialize_metadata(connection)
+        if checkpoint.status == "transformation_failed":
+            drop_known_analytical_relations(connection)
         _update_run(
-            connection, checkpoint, "interrupted", error_message=str(exc)[:2000]
+            connection,
+            checkpoint,
+            (
+                "transformation_failed"
+                if checkpoint.status == "transformation_failed"
+                else "interrupted"
+            ),
+            error_message=str(exc)[:2000],
         )
         LOGGER.exception(
             "Snapshot pipeline interrupted",
@@ -560,4 +665,5 @@ def run_pipeline(
         )
         raise
     finally:
-        connection.close()
+        if connection is not None:
+            connection.close()

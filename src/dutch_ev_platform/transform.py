@@ -15,6 +15,104 @@ class DataQualityError(RuntimeError):
     """Raised when required data-quality rules fail."""
 
 
+REQUIRED_STAGING_SCHEMA = {
+    "vehicles": {
+        "vehicle_id_hash": {"VARCHAR"},
+        "brand": {"VARCHAR"},
+        "model": {"VARCHAR"},
+        "registration_date": {"DATE"},
+        "registration_year": {
+            "TINYINT",
+            "SMALLINT",
+            "INTEGER",
+            "BIGINT",
+            "HUGEINT",
+        },
+        "primary_colour": {"VARCHAR"},
+        "secondary_colour": {"VARCHAR"},
+        "vehicle_type": {"VARCHAR"},
+        "ingestion_id": {"VARCHAR"},
+    },
+    "fuels": {
+        "vehicle_id_hash": {"VARCHAR"},
+        "fuel_sequence": {
+            "TINYINT",
+            "SMALLINT",
+            "INTEGER",
+            "BIGINT",
+            "HUGEINT",
+        },
+        "fuel_type": {"VARCHAR"},
+        "emission_code": {"VARCHAR"},
+        "co2_combined_g_km": {
+            "TINYINT",
+            "SMALLINT",
+            "INTEGER",
+            "BIGINT",
+            "HUGEINT",
+            "FLOAT",
+            "DOUBLE",
+            "DECIMAL",
+        },
+        "net_max_power_kw": {
+            "TINYINT",
+            "SMALLINT",
+            "INTEGER",
+            "BIGINT",
+            "HUGEINT",
+            "FLOAT",
+            "DOUBLE",
+            "DECIMAL",
+        },
+        "hybrid_class": {"VARCHAR"},
+        "ingestion_id": {"VARCHAR"},
+    },
+}
+
+
+def _duckdb_base_type(value: str) -> str:
+    return value.split("(", 1)[0].upper()
+
+
+def validate_staging_schema(
+    connection: duckdb.DuckDBPyConnection,
+) -> None:
+    """Reject a missing or incompatible staging layer before any migration write."""
+    problems: list[str] = []
+    for table, expected_columns in REQUIRED_STAGING_SCHEMA.items():
+        exists = connection.execute(
+            """
+            SELECT count(*)
+            FROM information_schema.tables
+            WHERE table_schema = 'staging' AND table_name = ?
+            """,
+            [table],
+        ).fetchone()[0]
+        if not exists:
+            problems.append(f"missing staging.{table}")
+            continue
+        actual_columns = {
+            row[1]: _duckdb_base_type(row[2])
+            for row in connection.execute(
+                f"PRAGMA table_info('staging.{table}')"
+            ).fetchall()
+        }
+        for column, allowed_types in expected_columns.items():
+            actual_type = actual_columns.get(column)
+            if actual_type is None:
+                problems.append(f"missing staging.{table}.{column}")
+            elif actual_type not in allowed_types:
+                problems.append(
+                    f"incompatible staging.{table}.{column} type "
+                    f"{actual_type}"
+                )
+    if problems:
+        raise DataQualityError(
+            "Transform-only staging schema is incompatible: "
+            + "; ".join(problems)
+        )
+
+
 def parse_rdw_date(value: Any) -> date | None:
     text = str(value or "").strip()
     if not text:
@@ -179,84 +277,55 @@ def upsert_staging_page(
         connection.execute("INSERT INTO staging.fuels SELECT * FROM incoming_fuels")
 
 
-def build_analytics(connection: duckdb.DuckDBPyConnection) -> None:
-    connection.execute(
-        """
-        CREATE OR REPLACE TABLE analytics.ev_vehicles AS
-        WITH fuel_profile AS (
-            SELECT
-                vehicle_id_hash,
-                bool_or(lower(fuel_type) = 'elektriciteit') AS has_electric,
-                bool_or(lower(fuel_type) = 'waterstof') AS has_hydrogen,
-                count(*) AS fuel_count
-            FROM staging.fuels
-            GROUP BY vehicle_id_hash
-        )
-        SELECT
-            v.vehicle_id_hash,
-            v.brand,
-            v.model,
-            v.registration_date,
-            v.registration_year,
-            v.vehicle_type,
-            CASE
-                WHEN fp.has_hydrogen THEN 'Hydrogen electric'
-                WHEN fp.has_electric AND fp.fuel_count = 1 THEN 'Battery electric'
-                WHEN fp.has_electric THEN 'Plug-in or hybrid electric'
-            END AS ev_category,
-            v.ingestion_id
-        FROM staging.vehicles v
-        JOIN fuel_profile fp USING (vehicle_id_hash)
-        WHERE fp.has_electric OR fp.has_hydrogen
-        """
-    )
-    connection.execute(
-        """
-        CREATE OR REPLACE TABLE analytics.ev_fuel_details AS
-        SELECT
-            ev.vehicle_id_hash,
-            ev.brand,
-            ev.model,
-            ev.registration_year,
-            ev.ev_category,
-            f.fuel_type,
-            f.co2_combined_g_km,
-            f.net_max_power_kw
-        FROM analytics.ev_vehicles ev
-        JOIN staging.fuels f USING (vehicle_id_hash)
-        """
-    )
-    connection.execute(
-        """
-        CREATE OR REPLACE TABLE analytics.ev_metrics AS
-        SELECT
-            fuel_type,
-            brand,
-            model,
-            registration_year,
-            count(DISTINCT vehicle_id_hash) AS vehicle_count,
-            round(avg(co2_combined_g_km), 2) AS avg_co2_combined_g_km,
-            round(avg(net_max_power_kw), 2) AS avg_net_max_power_kw
-        FROM analytics.ev_fuel_details
-        GROUP BY fuel_type, brand, model, registration_year
-        """
-    )
-
-
-def build_models(
+def drop_known_analytical_relations(
     connection: duckdb.DuckDBPyConnection,
-    vehicles: list[dict[str, Any]],
-    fuels: list[dict[str, Any]],
 ) -> None:
-    """Backward-compatible one-page model build used by focused unit tests."""
-    initialize_model_tables(connection)
-    upsert_staging_page(connection, vehicles, fuels)
-    build_analytics(connection)
+    """Remove Phase 1 and dbt-owned outputs without touching user relations."""
+    known_relations = {
+        "dbt_staging": {
+            "stg_vehicles",
+            "stg_fuels",
+            "stg_ingestion_runs",
+        },
+        "intermediate": {
+            "int_vehicle_fuel_profile",
+            "int_snapshot_context",
+        },
+        "analytics": {
+            "ev_vehicles",
+            "ev_fuel_details",
+            "ev_metrics",
+            "dim_vehicle",
+            "dim_vehicle_model",
+            "dim_registration_date",
+            "dim_powertrain",
+            "fact_vehicle_snapshot",
+            "fact_vehicle_fuel",
+            "mart_ev_overview",
+            "mart_ev_metrics",
+        },
+    }
+    rows = connection.execute(
+        """
+        SELECT table_schema, table_name, table_type
+        FROM information_schema.tables
+        WHERE table_schema IN ('dbt_staging', 'intermediate', 'analytics')
+        """
+    ).fetchall()
+    for schema, relation, relation_type in rows:
+        if relation not in known_relations.get(schema, set()):
+            continue
+        object_type = "VIEW" if relation_type == "VIEW" else "TABLE"
+        connection.execute(
+            f'DROP {object_type} IF EXISTS "{schema}"."{relation}"'
+        )
 
 
-def run_quality_checks(connection: duckdb.DuckDBPyConnection) -> dict[str, int]:
-    ev_row_count = connection.execute(
-        "SELECT count(*) FROM analytics.ev_vehicles"
+def run_staging_quality_checks(
+    connection: duckdb.DuckDBPyConnection,
+) -> dict[str, int]:
+    vehicle_count = connection.execute(
+        "SELECT count(*) FROM staging.vehicles"
     ).fetchone()[0]
     checks = {
         "null_vehicle_hashes": connection.execute(
@@ -298,25 +367,9 @@ def run_quality_checks(connection: duckdb.DuckDBPyConnection) -> dict[str, int]:
               AND (registration_year < 1900 OR registration_year > year(current_date) + 1)
             """
         ).fetchone()[0],
-        "empty_ev_analytics": int(ev_row_count == 0),
+        "empty_vehicle_staging": int(vehicle_count == 0),
     }
     failures = {name: count for name, count in checks.items() if count}
     if failures:
         raise DataQualityError(f"Data-quality checks failed: {failures}")
     return checks
-
-
-def export_parquet(connection: duckdb.DuckDBPyConnection, parquet_dir: Any) -> None:
-    parquet_dir.mkdir(parents=True, exist_ok=True)
-    for schema, table in (
-        ("staging", "vehicles"),
-        ("staging", "fuels"),
-        ("analytics", "ev_vehicles"),
-        ("analytics", "ev_fuel_details"),
-        ("analytics", "ev_metrics"),
-    ):
-        target = (parquet_dir / f"{schema}_{table}.parquet").as_posix()
-        connection.execute(
-            f"COPY {schema}.{table} TO ? (FORMAT PARQUET, COMPRESSION ZSTD)",
-            [target],
-        )

@@ -1,0 +1,89 @@
+version: 2
+
+models:
+  - name: stg_vehicles
+    description: Thin typed view over the Python-owned privacy-safe vehicle staging table.
+    columns:
+      - name: vehicle_id_hash
+        description: Salted SHA-256 vehicle key; never a plaintext licence plate.
+        data_tests: [not_null, unique]
+      - name: brand
+        description: Normalized RDW vehicle manufacturer name.
+      - name: model
+        description: Normalized RDW commercial model name.
+      - name: registration_date
+        description: RDW first-admission date; it is not a vehicle-sale event.
+      - name: registration_year
+        description: Calendar year derived from the first-admission date.
+      - name: primary_colour
+        description: Primary vehicle colour when reported.
+      - name: secondary_colour
+        description: Secondary vehicle colour when reported.
+      - name: vehicle_type
+        description: RDW vehicle type.
+      - name: ingestion_id
+        description: Python ingestion run that loaded this current-snapshot row.
+        data_tests: [not_null]
+
+  - name: stg_fuels
+    description: Thin typed view over complete fuel profiles for staged EV vehicles.
+    columns:
+      - name: vehicle_id_hash
+        description: Salted SHA-256 vehicle key.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_vehicles')
+                field: vehicle_id_hash
+      - name: fuel_sequence
+        description: RDW fuel sequence within a vehicle.
+        data_tests: [not_null]
+      - name: fuel_type
+        description: RDW fuel description.
+        data_tests: [not_null]
+      - name: emission_code
+        description: Reported emission classification when available.
+      - name: co2_combined_g_km
+        description: Reported combined CO2 value in grams per kilometre when available.
+      - name: net_max_power_kw
+        description: Reported net maximum power in kilowatts when available.
+      - name: hybrid_class
+        description: Reported hybrid-electric class when available.
+      - name: ingestion_id
+        description: Python ingestion run that loaded this fuel row.
+        data_tests: [not_null]
+    data_tests:
+      - unique:
+          arguments:
+            column_name: "vehicle_id_hash || ':' || cast(fuel_sequence as varchar)"
+
+  - name: stg_ingestion_runs
+    description: Typed operational context for ingestion runs referenced by staged rows.
+    columns:
+      - name: ingestion_id
+        description: Stable ingestion-run identifier.
+        data_tests: [not_null, unique]
+      - name: started_at
+        description: UTC time at which the original snapshot ingestion started.
+        data_tests: [not_null]
+      - name: ingestion_mode
+        description: Ingestion mode; Phase 2 remains a resumable snapshot.
+      - name: requested_limit
+        description: Requested matched-vehicle cap, or null for a complete snapshot.
+      - name: page_size
+        description: Requested identifier keyset page size.
+      - name: api_requests
+        description: Total RDW HTTP request attempts recorded by Python.
+      - name: source_rows_received
+        description: Source rows associated with durably completed logical pages.
+      - name: matched_vehicles
+        description: Accepted staged vehicle rows.
+      - name: fuel_rows
+        description: Accepted staged fuel rows.
+      - name: rejected_rows
+        description: Rows rejected or unmatched during normalization.
+      - name: resumed
+        description: Whether the run has been resumed.
+      - name: resume_count
+        description: Number of resume invocations.

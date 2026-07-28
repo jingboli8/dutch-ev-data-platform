@@ -1,0 +1,54 @@
+version: 2
+
+models:
+  - name: int_vehicle_fuel_profile
+    description: Reusable one-row-per-vehicle powertrain classification derived from all reported fuels.
+    columns:
+      - name: vehicle_id_hash
+        description: Salted vehicle key and model grain.
+        data_tests: [not_null, unique]
+      - name: fuel_record_count
+        description: Number of staged fuel rows for the vehicle.
+        data_tests: [not_null]
+      - name: has_electric
+        description: Whether electricity appears in the complete fuel profile.
+        data_tests: [not_null]
+      - name: has_hydrogen
+        description: Whether hydrogen appears in the complete fuel profile.
+        data_tests: [not_null]
+      - name: has_other_fuel
+        description: Whether a fuel other than electricity or hydrogen is reported.
+        data_tests: [not_null]
+      - name: powertrain_category
+        description: Battery electric, hybrid electric, or hydrogen electric classification.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - Battery electric
+                  - Hybrid electric
+                  - Hydrogen electric
+
+  - name: int_snapshot_context
+    description: One row per ingestion represented in the current staging snapshot.
+    columns:
+      - name: ingestion_id
+        description: Ingestion identifier and model grain.
+        data_tests: [not_null, unique]
+      - name: snapshot_started_at
+        description: Start time of the resumable snapshot, not a business event time.
+      - name: ingestion_mode
+        description: Python ingestion mode.
+      - name: requested_limit
+        description: Requested vehicle cap, or null for complete ingestion.
+      - name: page_size
+        description: Identifier page size.
+      - name: api_requests
+        description: RDW API request attempts.
+      - name: source_rows_received
+        description: Source rows for durably completed pages.
+      - name: resumed
+        description: Whether ingestion resumed.
+      - name: resume_count
+        description: Number of resumes.

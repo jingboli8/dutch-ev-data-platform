@@ -25,6 +25,13 @@ htmlcov/
 build/
 dist/
 
+# dbt generated artifacts
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/
+dbt/package-lock.yml
+dbt/.user.yml
+
 # Editors and operating systems
 .idea/
 .vscode/

@@ -1,34 +1,45 @@
--- Top EV brands in the current local sample.
+-- Top EV brands in the current dbt-owned snapshot mart.
 SELECT
     brand,
-    count(*) AS ev_vehicle_count
-FROM analytics.ev_vehicles
+    sum(vehicle_count) AS ev_vehicle_count
+FROM analytics.mart_ev_overview
 GROUP BY brand
 ORDER BY ev_vehicle_count DESC, brand
 LIMIT 10;
 
--- EV adoption profile by registration year and category.
+-- First-admission profile by year and powertrain category.
+-- Registration is not interpreted as a vehicle sale.
 SELECT
     registration_year,
-    ev_category,
-    count(*) AS vehicle_count
-FROM analytics.ev_vehicles
+    powertrain_category,
+    sum(vehicle_count) AS vehicle_count
+FROM analytics.mart_ev_overview
 WHERE registration_year IS NOT NULL
-GROUP BY registration_year, ev_category
+GROUP BY registration_year, powertrain_category
 ORDER BY registration_year DESC, vehicle_count DESC;
 
--- Detailed aggregate requested by fuel, brand, model, and registration year.
+-- Current-snapshot aggregate by reported fuel and vehicle attributes.
 SELECT
     fuel_type,
     brand,
     model,
     registration_year,
+    powertrain_category,
     vehicle_count,
-    avg_co2_combined_g_km,
-    avg_net_max_power_kw
-FROM analytics.ev_metrics
+    avg_reported_co2_combined_g_km,
+    avg_reported_net_max_power_kw
+FROM analytics.mart_ev_metrics
 ORDER BY vehicle_count DESC, brand, model
 LIMIT 50;
+
+-- Dimensional fact grain: one row per snapshot ingestion and vehicle.
+SELECT
+    snapshot_ingestion_id,
+    count(*) AS vehicle_snapshot_rows,
+    sum(fuel_record_count) AS reported_fuel_rows
+FROM analytics.fact_vehicle_snapshot
+GROUP BY snapshot_ingestion_id
+ORDER BY snapshot_ingestion_id DESC;
 
 -- Resumable snapshot ingestion audit (not a source-incremental load).
 SELECT
