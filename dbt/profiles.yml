@@ -1,0 +1,8 @@
+dutch_ev:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('DBT_DUCKDB_PATH', 'data/warehouse/dutch_ev.duckdb') }}"
+      schema: analytics
+      threads: 1

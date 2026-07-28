@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
 import logging
 import time
+from collections.abc import Iterable, Iterator
 from typing import Any
 
 import requests
 
 from .config import Settings
-
 
 LOGGER = logging.getLogger(__name__)
 
@@ -35,7 +34,6 @@ class RDWClient:
         )
 
     def _get(self, url: str, params: dict[str, Any]) -> list[dict[str, Any]]:
-        last_error: Exception | None = None
         for attempt in range(1, self.settings.max_retries + 1):
             try:
                 self.request_count += 1
@@ -49,8 +47,7 @@ class RDWClient:
                 ):
                     raise ExtractionError("RDW response is not a JSON array of objects")
                 return payload
-            except (requests.RequestException, ValueError, ExtractionError) as exc:
-                last_error = exc
+            except (requests.RequestException, ValueError, ExtractionError):
                 LOGGER.warning(
                     "RDW request failed",
                     extra={"event": "request_retry", "dataset": url, "row_count": attempt},

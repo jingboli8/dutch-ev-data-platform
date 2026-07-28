@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import replace
 import json
+from dataclasses import replace
 
 from .config import Settings
 from .logging_utils import configure_logging
-from .pipeline import run_pipeline
+from .pipeline import run_pipeline, run_transform_only
 
 
 def main() -> None:
@@ -41,6 +41,11 @@ def main() -> None:
         action="store_true",
         help="Continue the last interrupted snapshot checkpoint",
     )
+    mode.add_argument(
+        "--transform-only",
+        action="store_true",
+        help="Build dbt models from an existing privacy-safe staging warehouse",
+    )
     args = parser.parse_args()
     settings = Settings.load()
     if args.limit is not None:
@@ -54,17 +59,16 @@ def main() -> None:
     if args.detail_batch_size is not None:
         settings = replace(settings, detail_batch_size=args.detail_batch_size)
     configure_logging(settings.log_level)
-    print(
-        json.dumps(
-            run_pipeline(
-                settings,
-                resume=args.resume,
-                fresh=args.fresh,
-            ),
-            indent=2,
-            default=str,
+    result = (
+        run_transform_only(settings)
+        if args.transform_only
+        else run_pipeline(
+            settings,
+            resume=args.resume,
+            fresh=args.fresh,
         )
     )
+    print(json.dumps(result, indent=2, default=str))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,270 @@
+version: 2
+
+models:
+  - name: dim_vehicle
+    description: >-
+      Current-snapshot vehicle dimension at one row per salted vehicle key.
+      It contains descriptive colour attributes but no plaintext identifier.
+    columns:
+      - name: vehicle_key
+        description: Stable salted SHA-256 vehicle key.
+        data_tests: [not_null, unique]
+      - name: primary_colour
+        description: Primary RDW colour when reported.
+      - name: secondary_colour
+        description: Secondary RDW colour when reported.
+
+  - name: dim_vehicle_model
+    description: >-
+      Reusable manufacturer/model/type dimension at one row per distinct
+      normalized combination in the current snapshot.
+    columns:
+      - name: vehicle_model_key
+        description: Deterministic key for manufacturer, model, and vehicle type.
+        data_tests: [not_null, unique]
+      - name: brand
+        description: RDW manufacturer name when reported.
+      - name: model
+        description: RDW commercial model name when reported.
+      - name: vehicle_type
+        description: RDW vehicle type when reported.
+
+  - name: dim_registration_date
+    description: >-
+      Date dimension containing distinct RDW first-admission dates represented
+      in the current snapshot. These dates are not vehicle-sale events.
+    columns:
+      - name: registration_date_key
+        description: Integer YYYYMMDD date key.
+        data_tests: [not_null, unique]
+      - name: registration_date
+        description: RDW first-admission date.
+        data_tests: [not_null, unique]
+      - name: registration_year
+        description: Calendar year.
+        data_tests: [not_null]
+      - name: registration_month
+        description: Calendar month number.
+        data_tests: [not_null]
+      - name: registration_quarter
+        description: Calendar quarter number.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3, 4]
+
+  - name: dim_powertrain
+    description: >-
+      Powertrain-profile dimension at one row per EV category and set of
+      electric, hydrogen, and other-fuel flags.
+    columns:
+      - name: powertrain_key
+        description: Deterministic powertrain-profile key.
+        data_tests: [not_null, unique]
+      - name: powertrain_category
+        description: Battery electric, hybrid electric, or hydrogen electric.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - Battery electric
+                  - Hybrid electric
+                  - Hydrogen electric
+      - name: has_electric
+        description: Whether electricity is reported.
+        data_tests: [not_null]
+      - name: has_hydrogen
+        description: Whether hydrogen is reported.
+        data_tests: [not_null]
+      - name: has_other_fuel
+        description: Whether another fuel is reported.
+        data_tests: [not_null]
+
+  - name: fact_vehicle_snapshot
+    description: >-
+      Current-state snapshot fact at exactly one row per vehicle key and
+      snapshot ingestion. It is not a history of vehicle changes.
+    columns:
+      - name: vehicle_snapshot_key
+        description: Deterministic key for snapshot ingestion and vehicle.
+        data_tests: [not_null, unique]
+      - name: vehicle_key
+        description: Salted vehicle key.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_vehicle')
+                field: vehicle_key
+      - name: vehicle_model_key
+        description: Manufacturer/model dimension key.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_vehicle_model')
+                field: vehicle_model_key
+      - name: registration_date_key
+        description: First-admission date key when the source date is available.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_registration_date')
+                field: registration_date_key
+      - name: powertrain_key
+        description: Powertrain-profile dimension key.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_powertrain')
+                field: powertrain_key
+      - name: snapshot_ingestion_id
+        description: Python snapshot ingestion represented by the row.
+        data_tests: [not_null]
+      - name: snapshot_started_at
+        description: Operational snapshot start time, not a business event timestamp.
+      - name: fuel_record_count
+        description: Number of reported fuel detail rows for this vehicle.
+        data_tests: [not_null]
+      - name: vehicle_count
+        description: Additive row-count measure fixed to one.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [1]
+
+  - name: fact_vehicle_fuel
+    description: >-
+      Fuel-detail fact at exactly one row per snapshot ingestion, vehicle key,
+      and RDW fuel sequence.
+    columns:
+      - name: vehicle_fuel_fact_key
+        description: Deterministic fact-grain key.
+        data_tests: [not_null, unique]
+      - name: vehicle_snapshot_key
+        description: Parent vehicle snapshot key.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fact_vehicle_snapshot')
+                field: vehicle_snapshot_key
+      - name: vehicle_key
+        description: Salted vehicle key.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_vehicle')
+                field: vehicle_key
+      - name: snapshot_ingestion_id
+        description: Python snapshot ingestion represented by the row.
+        data_tests: [not_null]
+      - name: fuel_sequence
+        description: RDW fuel sequence within the vehicle profile.
+        data_tests: [not_null]
+      - name: fuel_type
+        description: Reported fuel description.
+        data_tests: [not_null]
+      - name: emission_code
+        description: Reported emission classification when available.
+      - name: co2_combined_g_km
+        description: Reported combined CO2 value when available; not estimated.
+      - name: net_max_power_kw
+        description: Reported net maximum power when available.
+      - name: hybrid_class
+        description: Reported hybrid class when available.
+
+  - name: mart_ev_overview
+    description: >-
+      Power BI-ready current EV overview at one row per vehicle snapshot,
+      combining privacy-safe dimensional attributes.
+    columns:
+      - name: vehicle_snapshot_key
+        description: Mart grain key.
+        data_tests: [not_null, unique]
+      - name: snapshot_ingestion_id
+        description: Snapshot ingestion identifier.
+        data_tests: [not_null]
+      - name: snapshot_started_at
+        description: Operational start time of the snapshot.
+      - name: vehicle_key
+        description: Salted vehicle key.
+        data_tests: [not_null]
+      - name: brand
+        description: Manufacturer when reported.
+      - name: model
+        description: Commercial model when reported.
+      - name: vehicle_type
+        description: RDW vehicle type when reported.
+      - name: primary_colour
+        description: Primary colour when reported.
+      - name: secondary_colour
+        description: Secondary colour when reported.
+      - name: registration_date
+        description: First-admission date, not a sale date.
+      - name: registration_year
+        description: First-admission calendar year.
+      - name: powertrain_category
+        description: Derived EV powertrain category.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - Battery electric
+                  - Hybrid electric
+                  - Hydrogen electric
+      - name: has_electric
+        description: Electricity flag.
+      - name: has_hydrogen
+        description: Hydrogen flag.
+      - name: has_other_fuel
+        description: Other-fuel flag.
+      - name: fuel_record_count
+        description: Count of reported fuel rows.
+      - name: vehicle_count
+        description: Additive vehicle-count measure fixed to one.
+
+  - name: mart_ev_metrics
+    description: >-
+      Aggregate mart by fuel type, manufacturer, model, first-admission year,
+      and powertrain category for current-snapshot analysis.
+    columns:
+      - name: fuel_type
+        description: Reported fuel type.
+        data_tests: [not_null]
+      - name: brand
+        description: Manufacturer when reported.
+      - name: model
+        description: Commercial model when reported.
+      - name: registration_year
+        description: First-admission year when available.
+      - name: powertrain_category
+        description: Derived EV category.
+        data_tests: [not_null]
+      - name: vehicle_count
+        description: Distinct privacy-safe vehicles in the aggregate.
+        data_tests: [not_null]
+      - name: avg_reported_co2_combined_g_km
+        description: >-
+          Arithmetic mean of non-null reported combined CO2 values across
+          fuel-detail fact rows in this exact aggregate group; null is retained
+          when no row reports the measure.
+      - name: avg_reported_net_max_power_kw
+        description: >-
+          Arithmetic mean of non-null reported net maximum-power values across
+          fuel-detail fact rows in this exact aggregate group; null is retained
+          when no row reports the measure.
+    data_tests:
+      - unique:
+          arguments:
+            column_name: >-
+              fuel_type || '|' || coalesce(brand, '<null>') || '|'
+              || coalesce(model, '<null>') || '|'
+              || coalesce(cast(registration_year as varchar), '<null>') || '|'
+              || powertrain_category

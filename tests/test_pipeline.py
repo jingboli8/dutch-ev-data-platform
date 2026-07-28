@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from dataclasses import replace
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import duckdb
 import pytest
 
-from dutch_ev_platform.checkpoint import CheckpointError, CheckpointStore
-from dutch_ev_platform.extract import ExtractionError
 import dutch_ev_platform.pipeline as pipeline_module
-from dutch_ev_platform.pipeline import run_pipeline
-
+from dutch_ev_platform.checkpoint import CheckpointError, CheckpointStore
+from dutch_ev_platform.dbt_orchestration import DbtBuildError
+from dutch_ev_platform.extract import ExtractionError
+from dutch_ev_platform.pipeline import run_pipeline, run_transform_only
 
 IDENTIFIERS = [
     "TEST_VEHICLE_001",
@@ -97,8 +97,24 @@ class NoRequestClient(FakePagedClient):
         raise AssertionError("a completed checkpoint must not request another page")
 
 
+def _fail_dbt_build(settings):
+    with duckdb.connect(str(settings.database_path), read_only=True) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM staging.vehicles"
+        ).fetchone()[0] > 0
+    raise DbtBuildError("simulated dbt transformation failure")
+
+
 def _row_counts(database_path: Path) -> tuple[int, int, int]:
     with duckdb.connect(str(database_path), read_only=True) as connection:
+        fact_exists = connection.execute(
+            """
+            SELECT count(*)
+            FROM information_schema.tables
+            WHERE table_schema = 'analytics'
+              AND table_name = 'fact_vehicle_snapshot'
+            """
+        ).fetchone()[0]
         return (
             connection.execute(
                 "SELECT count(*) FROM staging.vehicles"
@@ -106,10 +122,35 @@ def _row_counts(database_path: Path) -> tuple[int, int, int]:
             connection.execute(
                 "SELECT count(*) FROM staging.fuels"
             ).fetchone()[0],
-            connection.execute(
-                "SELECT count(*) FROM analytics.ev_vehicles"
-            ).fetchone()[0],
+            (
+                connection.execute(
+                    "SELECT count(*) FROM analytics.fact_vehicle_snapshot"
+                ).fetchone()[0]
+                if fact_exists
+                else 0
+            ),
         )
+
+
+def _known_analytics_count(database_path: Path) -> int:
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT count(*)
+            FROM information_schema.tables
+            WHERE table_schema IN (
+                'dbt_staging', 'intermediate', 'analytics'
+            )
+              AND table_name IN (
+                'stg_vehicles', 'stg_fuels', 'stg_ingestion_runs',
+                'int_vehicle_fuel_profile', 'int_snapshot_context',
+                'dim_vehicle', 'dim_vehicle_model',
+                'dim_registration_date', 'dim_powertrain',
+                'fact_vehicle_snapshot', 'fact_vehicle_fuel',
+                'mart_ev_overview', 'mart_ev_metrics'
+              )
+            """
+        ).fetchone()[0]
 
 
 def test_multiple_pages_build_private_outputs(settings):
@@ -133,7 +174,9 @@ def test_multiple_pages_build_private_outputs(settings):
     )
     assert result["checkpoint_status"] == "completed"
     assert result["quality_checks"]["plain_identifier_columns"] == 0
-    assert (configured.parquet_dir / "analytics_ev_metrics.parquet").exists()
+    assert (
+        configured.parquet_dir / "analytics_mart_ev_metrics.parquet"
+    ).exists()
     with duckdb.connect(str(configured.database_path), read_only=True) as connection:
         assert connection.execute(
             "SELECT count(*) FROM staging.vehicles"
@@ -220,7 +263,12 @@ def test_fresh_smaller_snapshot_removes_rows_from_previous_snapshot(settings):
     with duckdb.connect() as connection:
         parquet_count = connection.execute(
             "SELECT count(*) FROM read_parquet(?)",
-            [str(settings.parquet_dir / "analytics_ev_vehicles.parquet")],
+            [
+                str(
+                    settings.parquet_dir
+                    / "analytics_fact_vehicle_snapshot.parquet"
+                )
+            ],
         ).fetchone()[0]
     assert parquet_count == 1
 
@@ -235,7 +283,8 @@ def test_interrupted_fresh_initialization_is_safely_resumable(
     )
     original_initialize = pipeline_module._initialize_fresh_snapshot
 
-    def crash_during_initialization(connection, checkpoint):
+    def crash_during_initialization(connection, checkpoint, configured_settings):
+        del connection, checkpoint, configured_settings
         raise KeyboardInterrupt("simulated fresh initialization crash")
 
     monkeypatch.setattr(
@@ -345,6 +394,390 @@ def test_completed_checkpoint_reconciles_metadata_without_api_request(
         assert connection.execute(
             "SELECT status FROM meta.ingestion_runs"
         ).fetchone()[0] == "succeeded"
+
+
+def test_failed_dbt_build_resumes_without_requesting_rdw_pages(settings):
+    with pytest.raises(DbtBuildError, match="simulated dbt"):
+        run_pipeline(
+            settings,
+            FakePagedClient(identifiers=IDENTIFIERS[:2]),
+            fresh=True,
+            dbt_executor=_fail_dbt_build,
+        )
+
+    checkpoint = json.loads(
+        settings.checkpoint_path.read_text(encoding="utf-8")
+    )
+    assert checkpoint["status"] == "transformation_failed"
+    assert _row_counts(settings.database_path)[:2] == (2, 2)
+    with duckdb.connect(
+        str(settings.database_path), read_only=True
+    ) as connection:
+        assert connection.execute(
+            "SELECT status FROM meta.ingestion_runs"
+        ).fetchone()[0] == "transformation_failed"
+
+    result = run_pipeline(settings, NoRequestClient(), resume=True)
+
+    assert result["checkpoint_status"] == "completed"
+    assert result["matched_vehicles"] == 2
+    assert result["resume_count"] == 1
+    assert _row_counts(settings.database_path) == (2, 2, 2)
+
+
+def test_partial_dbt_build_is_removed_and_resumes_without_api(settings):
+    def fail_after_partial_model(configured):
+        with duckdb.connect(str(configured.database_path)) as connection:
+            connection.execute("CREATE SCHEMA IF NOT EXISTS analytics")
+            connection.execute(
+                "CREATE TABLE analytics.dim_vehicle(vehicle_key VARCHAR)"
+            )
+        raise DbtBuildError("simulated partial dbt failure")
+
+    with pytest.raises(DbtBuildError, match="partial dbt"):
+        run_pipeline(
+            settings,
+            FakePagedClient(identifiers=IDENTIFIERS[:2]),
+            fresh=True,
+            dbt_executor=fail_after_partial_model,
+        )
+
+    assert _known_analytics_count(settings.database_path) == 0
+    assert _row_counts(settings.database_path)[:2] == (2, 2)
+    result = run_pipeline(settings, NoRequestClient(), resume=True)
+    assert result["checkpoint_status"] == "completed"
+    assert _row_counts(settings.database_path) == (2, 2, 2)
+
+
+def test_parquet_export_failure_is_recoverable_without_api(
+    settings, monkeypatch
+):
+    original_export = pipeline_module.export_dbt_parquet
+
+    def fail_export(connection, parquet_dir):
+        del connection
+        parquet_dir.mkdir(parents=True, exist_ok=True)
+        (parquet_dir / "partial.parquet.tmp").write_bytes(b"partial")
+        raise OSError("simulated Parquet publication failure")
+
+    monkeypatch.setattr(
+        pipeline_module, "export_dbt_parquet", fail_export
+    )
+    with pytest.raises(OSError, match="Parquet publication"):
+        run_pipeline(
+            settings,
+            FakePagedClient(identifiers=IDENTIFIERS[:2]),
+            fresh=True,
+        )
+
+    checkpoint = json.loads(
+        settings.checkpoint_path.read_text(encoding="utf-8")
+    )
+    assert checkpoint["status"] == "transformation_failed"
+    assert _known_analytics_count(settings.database_path) == 0
+    assert not list(settings.parquet_dir.glob("*.parquet"))
+
+    monkeypatch.setattr(
+        pipeline_module, "export_dbt_parquet", original_export
+    )
+    result = run_pipeline(settings, NoRequestClient(), resume=True)
+    assert result["checkpoint_status"] == "completed"
+    assert _row_counts(settings.database_path) == (2, 2, 2)
+
+
+def test_final_metadata_failure_is_recoverable_without_api(
+    settings, monkeypatch
+):
+    original_update = pipeline_module._update_run
+    failed = False
+
+    def fail_once_after_dbt(
+        connection, checkpoint, status, error_message=None
+    ):
+        nonlocal failed
+        if status == "finalizing" and not failed:
+            failed = True
+            raise RuntimeError("simulated post-dbt metadata failure")
+        return original_update(
+            connection, checkpoint, status, error_message
+        )
+
+    monkeypatch.setattr(pipeline_module, "_update_run", fail_once_after_dbt)
+    with pytest.raises(RuntimeError, match="post-dbt metadata"):
+        run_pipeline(
+            settings,
+            FakePagedClient(identifiers=IDENTIFIERS[:2]),
+            fresh=True,
+        )
+
+    checkpoint = json.loads(
+        settings.checkpoint_path.read_text(encoding="utf-8")
+    )
+    assert checkpoint["status"] == "transformation_failed"
+    with duckdb.connect(
+        str(settings.database_path), read_only=True
+    ) as connection:
+        assert connection.execute(
+            "SELECT status FROM meta.ingestion_runs"
+        ).fetchone()[0] == "transformation_failed"
+    assert _known_analytics_count(settings.database_path) == 0
+
+    monkeypatch.setattr(
+        pipeline_module, "_update_run", original_update
+    )
+    result = run_pipeline(settings, NoRequestClient(), resume=True)
+    assert result["checkpoint_status"] == "completed"
+    assert _row_counts(settings.database_path) == (2, 2, 2)
+
+
+def test_interrupt_between_close_and_dbt_start_resumes_without_api(settings):
+    def interrupt_before_dbt(configured):
+        del configured
+        raise KeyboardInterrupt("simulated pre-dbt interrupt")
+
+    with pytest.raises(KeyboardInterrupt, match="pre-dbt"):
+        run_pipeline(
+            settings,
+            FakePagedClient(identifiers=IDENTIFIERS[:2]),
+            fresh=True,
+            dbt_executor=interrupt_before_dbt,
+        )
+
+    checkpoint = json.loads(
+        settings.checkpoint_path.read_text(encoding="utf-8")
+    )
+    assert checkpoint["status"] == "staging_complete"
+    assert _row_counts(settings.database_path)[:2] == (2, 2)
+    result = run_pipeline(settings, NoRequestClient(), resume=True)
+    assert result["checkpoint_status"] == "completed"
+    assert _row_counts(settings.database_path) == (2, 2, 2)
+
+
+def test_interrupt_after_dbt_before_completion_resumes_without_api(
+    settings, monkeypatch
+):
+    completed_build = pipeline_module.run_dbt_build
+    original_inspect = pipeline_module.inspect_dbt_outputs
+
+    def interrupt_after_build(connection):
+        assert connection.execute(
+            """
+            SELECT count(*) FROM information_schema.tables
+            WHERE table_schema = 'analytics'
+              AND table_name = 'fact_vehicle_snapshot'
+            """
+        ).fetchone()[0] == 1
+        raise KeyboardInterrupt("simulated post-dbt interrupt")
+
+    monkeypatch.setattr(
+        pipeline_module, "inspect_dbt_outputs", interrupt_after_build
+    )
+    with pytest.raises(KeyboardInterrupt, match="post-dbt"):
+        run_pipeline(
+            settings,
+            FakePagedClient(identifiers=IDENTIFIERS[:2]),
+            fresh=True,
+            dbt_executor=completed_build,
+        )
+
+    checkpoint = json.loads(
+        settings.checkpoint_path.read_text(encoding="utf-8")
+    )
+    assert checkpoint["status"] == "staging_complete"
+    assert _row_counts(settings.database_path)[:2] == (2, 2)
+
+    monkeypatch.setattr(
+        pipeline_module, "inspect_dbt_outputs", original_inspect
+    )
+    result = run_pipeline(settings, NoRequestClient(), resume=True)
+    assert result["checkpoint_status"] == "completed"
+    assert _row_counts(settings.database_path) == (2, 2, 2)
+
+
+def test_phase1_analytical_tables_are_removed_during_migration(settings):
+    run_pipeline(
+        settings,
+        FakePagedClient(identifiers=IDENTIFIERS[:2]),
+        fresh=True,
+    )
+    with duckdb.connect(str(settings.database_path)) as connection:
+        connection.execute(
+            """
+            CREATE TABLE analytics.ev_vehicles AS
+            SELECT vehicle_id_hash FROM staging.vehicles
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE analytics.ev_fuel_details AS
+            SELECT vehicle_id_hash FROM staging.fuels
+            """
+        )
+        connection.execute(
+            "CREATE TABLE analytics.ev_metrics(metric_value INTEGER)"
+        )
+    settings.checkpoint_path.unlink()
+
+    result = run_transform_only(settings)
+
+    assert result["mode"] == "transform_only"
+    assert result["dbt_model_rows"]["fact_vehicle_snapshot"] == 2
+    with duckdb.connect(
+        str(settings.database_path), read_only=True
+    ) as connection:
+        legacy = connection.execute(
+            """
+            SELECT count(*)
+            FROM information_schema.tables
+            WHERE table_schema = 'analytics'
+              AND table_name IN (
+                  'ev_vehicles', 'ev_fuel_details', 'ev_metrics'
+              )
+            """
+        ).fetchone()[0]
+    assert legacy == 0
+
+
+def test_transform_only_preserves_staging_and_unrelated_checkpoint(settings):
+    run_pipeline(
+        settings,
+        FakePagedClient(identifiers=IDENTIFIERS[:2]),
+        fresh=True,
+    )
+    checkpoint_before = settings.checkpoint_path.read_bytes()
+    with duckdb.connect(
+        str(settings.database_path), read_only=True
+    ) as connection:
+        vehicles_before = connection.execute(
+            "SELECT * FROM staging.vehicles ORDER BY vehicle_id_hash"
+        ).fetchall()
+        fuels_before = connection.execute(
+            """
+            SELECT * FROM staging.fuels
+            ORDER BY vehicle_id_hash, fuel_sequence
+            """
+        ).fetchall()
+
+    first = run_transform_only(settings)
+    second = run_transform_only(settings)
+
+    assert first["dbt_model_rows"] == second["dbt_model_rows"]
+    assert settings.checkpoint_path.read_bytes() == checkpoint_before
+    with duckdb.connect(
+        str(settings.database_path), read_only=True
+    ) as connection:
+        assert connection.execute(
+            "SELECT * FROM staging.vehicles ORDER BY vehicle_id_hash"
+        ).fetchall() == vehicles_before
+        assert connection.execute(
+            """
+            SELECT * FROM staging.fuels
+            ORDER BY vehicle_id_hash, fuel_sequence
+            """
+        ).fetchall() == fuels_before
+
+
+def test_transform_only_export_failure_cleans_models_and_is_repeatable(
+    settings, monkeypatch
+):
+    run_pipeline(
+        settings,
+        FakePagedClient(identifiers=IDENTIFIERS[:2]),
+        fresh=True,
+    )
+    checkpoint_before = settings.checkpoint_path.read_bytes()
+    counts_before = _row_counts(settings.database_path)[:2]
+    original_export = pipeline_module.export_dbt_parquet
+
+    def fail_export(connection, parquet_dir):
+        del connection, parquet_dir
+        raise OSError("simulated transform-only export failure")
+
+    monkeypatch.setattr(
+        pipeline_module, "export_dbt_parquet", fail_export
+    )
+    with pytest.raises(OSError, match="transform-only export"):
+        run_transform_only(settings)
+
+    assert _known_analytics_count(settings.database_path) == 0
+    assert _row_counts(settings.database_path)[:2] == counts_before
+    assert settings.checkpoint_path.read_bytes() == checkpoint_before
+
+    monkeypatch.setattr(
+        pipeline_module, "export_dbt_parquet", original_export
+    )
+    result = run_transform_only(settings)
+    assert result["dbt_model_rows"]["fact_vehicle_snapshot"] == 2
+    assert _row_counts(settings.database_path)[:2] == counts_before
+
+
+def test_transform_only_rejects_wrong_database_without_creating_staging(
+    settings,
+):
+    settings.database_path.parent.mkdir(parents=True, exist_ok=True)
+    with duckdb.connect(str(settings.database_path)) as connection:
+        connection.execute("CREATE TABLE unrelated(value INTEGER)")
+
+    with pytest.raises(
+        pipeline_module.DataQualityError, match="missing staging.vehicles"
+    ):
+        run_transform_only(settings)
+
+    with duckdb.connect(
+        str(settings.database_path), read_only=True
+    ) as connection:
+        schemas = {
+            row[0]
+            for row in connection.execute(
+                """
+                SELECT schema_name FROM information_schema.schemata
+                """
+            ).fetchall()
+        }
+        assert "staging" not in schemas
+        assert "meta" not in schemas
+        assert connection.execute(
+            "SELECT count(*) FROM unrelated"
+        ).fetchone()[0] == 0
+
+
+def test_transform_only_rejects_incompatible_staging_without_mutation(
+    settings,
+):
+    settings.database_path.parent.mkdir(parents=True, exist_ok=True)
+    with duckdb.connect(str(settings.database_path)) as connection:
+        connection.execute("CREATE SCHEMA staging")
+        connection.execute(
+            "CREATE TABLE staging.vehicles(vehicle_id_hash INTEGER)"
+        )
+        connection.execute(
+            "CREATE TABLE staging.fuels(vehicle_id_hash VARCHAR)"
+        )
+
+    with pytest.raises(
+        pipeline_module.DataQualityError, match="staging schema is incompatible"
+    ):
+        run_transform_only(settings)
+
+    with duckdb.connect(
+        str(settings.database_path), read_only=True
+    ) as connection:
+        assert connection.execute(
+            """
+            SELECT data_type
+            FROM information_schema.columns
+            WHERE table_schema = 'staging'
+              AND table_name = 'vehicles'
+              AND column_name = 'vehicle_id_hash'
+            """
+        ).fetchone()[0] == "INTEGER"
+        assert connection.execute(
+            """
+            SELECT count(*)
+            FROM information_schema.schemata
+            WHERE schema_name = 'meta'
+            """
+        ).fetchone()[0] == 0
 
 
 @pytest.mark.parametrize(

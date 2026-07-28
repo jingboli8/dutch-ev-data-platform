@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DBT_DUCKDB_PATH: ${{ github.workspace }}/data/ci/fixture.duckdb
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install project dependencies
+        run: python -m pip install --no-cache-dir -e ".[dev]"
+
+      - name: Lint Python
+        run: ruff check .
+
+      - name: Run Python tests
+        run: pytest
+
+      - name: Build synthetic offline DuckDB fixture
+        run: python scripts/build_ci_fixture.py --database "$DBT_DUCKDB_PATH"
+
+      - name: Resolve dbt packages
+        run: dbt deps --project-dir dbt --profiles-dir dbt --no-use-colors
+
+      - name: Validate dbt connection and project
+        run: |
+          dbt debug --project-dir dbt --profiles-dir dbt --no-use-colors
+          dbt parse --project-dir dbt --profiles-dir dbt --no-use-colors
+
+      - name: Build and test dimensional models
+        run: dbt build --project-dir dbt --profiles-dir dbt --no-use-colors
+
+      - name: Verify synthetic dimensional semantics
+        run: python -m scripts.verify_ci_fixture --database "$DBT_DUCKDB_PATH"
+
+      - name: Audit tracked and generated files
+        run: |
+          python scripts/audit_tracked_files.py
+          git diff --exit-code
+          test -z "$(git status --short --untracked-files=all)"

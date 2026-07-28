@@ -1,0 +1,26 @@
+name: dutch_ev
+version: "0.3.0"
+config-version: 2
+
+profile: dutch_ev
+
+model-paths: ["models"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+  - "logs"
+
+models:
+  dutch_ev:
+    staging:
+      +schema: dbt_staging
+      +materialized: view
+    intermediate:
+      +schema: intermediate
+      +materialized: view
+    marts:
+      +schema: analytics
+      +materialized: table

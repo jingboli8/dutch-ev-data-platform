@@ -1,26 +1,14 @@
 # Dutch EV Data Platform
 
-A privacy-aware local data engineering project that turns official Dutch RDW open
-data into typed DuckDB and Parquet analytical models. Phase 1 provides scalable,
-bounded-memory, resumable snapshot ingestion using Python, Requests, DuckDB, and
-pandas.
+[![CI](https://github.com/jingboli8/dutch-ev-data-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/jingboli8/dutch-ev-data-platform/actions/workflows/ci.yml)
 
-The project intentionally does not include Azure, Spark, Kafka, Docker, dbt,
-Power BI, invented performance claims, or claimed business impact.
+A privacy-aware local data engineering project that turns official Dutch RDW
+open data into a resumable DuckDB ingestion layer and a documented dbt
+dimensional model. Python owns reliable data acquisition and privacy controls;
+dbt owns analytical SQL, lineage, documentation, and SQL-level tests.
 
-## Capabilities
-
-- Pages through a configurable number of EVs or the complete qualifying source.
-- Uses deterministic keyset pagination over grouped `kenteken` values.
-- Retrieves matching vehicle rows and complete fuel profiles in bounded batches.
-- Persists content-addressed raw API pages for audit and safe resume.
-- Replaces licence plates with salted SHA-256 hashes before staging.
-- Checkpoints each completed page without storing plaintext vehicle identifiers.
-- Resumes interrupted snapshots from the last completed page.
-- Idempotently upserts staging data and audits duplicate source payloads.
-- Produces EV metrics by fuel, brand, model, and registration year.
-- Exports privacy-safe staging and analytical tables to compressed Parquet.
-- Records extraction, throughput, checkpoint, and data-quality metrics.
+The project intentionally does not include Power BI, Azure, Spark, Kafka,
+Airflow, Docker, invented performance claims, or claimed business impact.
 
 ## Data sources
 
@@ -29,96 +17,149 @@ Power BI, invented performance claims, or claimed business impact.
 - [Open Data RDW: Registered vehicle fuels](https://opendata.rdw.nl/Voertuigen/Open-Data-RDW-Gekentekende_voertuigen_brandstof/8ys7-d773)
   (`8ys7-d773`)
 
-The source is accessed through the official Socrata resource endpoints configured
-in `config/settings.toml`.
+The source is accessed through the official Socrata resource endpoints in
+`config/settings.toml`.
 
 ## Architecture
 
-```text
-RDW fuel dataset
-  grouped EV identifiers ordered by kenteken
-             |
-             | keyset pages
-             v
-Python snapshot orchestrator
-  one identifier page in memory
-             |
-             +--> bounded matching vehicle queries
-             +--> bounded complete fuel-profile queries
-             +--> content-addressed data/raw/*.json
-             |
-             v
-normalize + salted SHA-256 identifier
-             |
-             v
-DuckDB
-  meta.ingestion_runs
-  meta.ingested_payloads
-  staging.vehicles
-  staging.fuels
-  analytics.ev_vehicles
-  analytics.ev_fuel_details
-  analytics.ev_metrics
-             |
-             v
-data/parquet/*.parquet
+```mermaid
+flowchart TD
+    RDW["Official RDW vehicle and fuel APIs"]
+    PY["Python ingestion orchestration"]
+    RAW["Ignored content-addressed raw JSON"]
+    META["DuckDB meta schema"]
+    STAGE["DuckDB staging schema<br/>salted vehicle hashes only"]
+    DBTS["dbt staging views"]
+    INT["dbt intermediate fuel profiles"]
+    DIMS["dbt dimensions"]
+    FACTS["dbt snapshot and fuel facts"]
+    MARTS["dbt EV overview and metrics marts"]
+    PARQUET["Ignored privacy-safe Parquet"]
+    CI["GitHub Actions<br/>synthetic offline fixture"]
+
+    RDW --> PY
+    PY --> RAW
+    PY --> META
+    PY --> STAGE
+    STAGE --> DBTS
+    META --> DBTS
+    DBTS --> INT
+    DBTS --> DIMS
+    INT --> DIMS
+    DIMS --> FACTS
+    INT --> FACTS
+    FACTS --> MARTS
+    DIMS --> MARTS
+    MARTS --> PARQUET
+    DIMS --> PARQUET
+    FACTS --> PARQUET
+    CI -. no live API .-> STAGE
 ```
 
-Only one EV identifier page and its matching detail rows are held in memory. Each
-page is normalized and upserted before the next page is requested.
+Only one EV identifier page and its bounded detail batches are held in memory.
+Each page is hashed and transactionally upserted before the next keyset page is
+requested.
 
-## Pagination and resume design
+## Responsibility boundary
 
-The fuel dataset is filtered to `Elektriciteit` or `Waterstof`, grouped by
-`kenteken`, and ordered by `kenteken`. Subsequent pages use
-`kenteken > last_completed_key`, which avoids the increasing query cost and row
-shifts associated with large offsets.
+Python owns:
 
-The key itself is never written to a checkpoint. The checkpoint stores only the
-SHA-256 digest of the last completed raw identifier page. On resume, the key is
-derived from that Git-ignored raw page. Therefore:
+- RDW API requests, retries, keyset pagination, and resumable snapshots;
+- content-addressed raw response persistence and duplicate-payload auditing;
+- salted SHA-256 replacement of licence plates before staging;
+- DuckDB staging tables, checkpoint state, and operational metadata;
+- orchestration of dbt and publication of final Parquet files.
 
-- checkpoints contain no plaintext licence plates;
-- a resume requires both the checkpoint and its referenced private raw page;
-- an interrupted page may be requested again, but staging upserts and payload
-  hashes make the operation safe and auditable;
-- a page that does not advance the key is rejected to prevent an infinite loop.
+dbt owns:
 
-Raw pages and checkpoint files are atomically replaced. Each referenced raw page
-is verified against its SHA-256 digest before a cursor is recovered. A checkpoint
-also stores a privacy-safe configuration fingerprint, so a resume must use the
-same source endpoints, data and warehouse locations, limit, page size, detail
-batch size, and hash salt. Request timeout, retry, and log-level changes are safe.
+- thin typed views over Python-owned staging and metadata tables;
+- reusable EV fuel-profile and snapshot-context transformations;
+- dimensions, facts, and analytical marts;
+- relation and column documentation, lineage, and SQL data-quality tests.
+
+Analytical SQL is not maintained in Python. The architectural rationale is
+recorded in `docs/adr-001-python-dbt-boundary.md`.
+
+## Ingestion and recovery
+
+The identifier query filters fuel rows to `Elektriciteit` or `Waterstof`, groups
+by `kenteken`, orders by `kenteken`, and advances with
+`kenteken > last_completed_key`. The key itself is never stored in a checkpoint.
+Resume derives it from the SHA-256-verified, Git-ignored raw anchor page.
+
+The end-to-end CLI closes its Python DuckDB connection before starting dbt as a
+separate process. Arguments are passed as a list without shell interpolation.
+The child process receives `DBT_DUCKDB_PATH` and uses only the repository-local
+dbt project and profile.
+
+Checkpoint transformation states are explicit:
+
+- `initializing`: a fresh checkpoint exists, but replacement of the previous
+  staging snapshot has not yet completed;
+- `in_progress`: extraction may continue from the last durably committed page;
+- `staging_complete`: all selected RDW pages are durably committed and Python
+  staging checks passed;
+- `transformation_failed`: staging remains safe, but dbt failed;
+- `completed`: dbt tests and final Parquet publication succeeded.
+
+While dbt is running, the durable checkpoint remains `staging_complete` and
+`meta.ingestion_runs.status` is `transforming`. During final publication the
+metadata status is `finalizing`. An extraction exception records `interrupted`;
+an uncatchable process termination can leave the last earlier durable state,
+which is deliberately replayable.
+
+After a dbt failure, run the same command with `--resume`. The pipeline validates
+the original configuration and raw anchor, skips RDW extraction, and rebuilds
+dbt models from committed staging data.
+
+Parquet files are first written as a complete eight-file set in an ignored
+sibling directory and then published by a directory swap. Windows requires two
+directory renames, so an uncatchable termination in the narrow swap window can
+make the public directory temporarily unavailable; it cannot expose a mixed
+old/new set. Resume rebuilds and republishes the complete set, and successful
+publication removes abandoned private swap directories.
 
 ## Snapshot versus true incremental ingestion
 
-This implementation is a **resumable snapshot ingestion**, not a true
-source-incremental pipeline.
+This is resumable snapshot ingestion, not true source-incremental processing.
+The published RDW schemas do not provide a reliable row-level update timestamp
+or change sequence across both datasets. Dataset-level publication metadata
+cannot identify changed rows or deletions.
 
-The published RDW schemas do not expose a reliable row-level update timestamp or
-change sequence across both source datasets. Socrata's dataset-level
-`rowsUpdatedAt` metadata indicates that a publication changed, but it cannot
-identify changed rows, detect deletions, or serve as a row filter. Business dates
-such as first registration dates and the vehicle type-approval change sequence
-are not update watermarks.
+The public API also does not provide a transactionally frozen snapshot:
 
-Consequently, the pipeline deliberately does not label snapshot reruns as
-incremental loads. True incremental ingestion would require an authoritative
-row-level change timestamp, change-data feed, or versioned source export.
+- records inserted below an already processed key can be missed in that run;
+- records can change or be deleted while keyset pagination is in progress;
+- vehicle and fuel detail requests occur at slightly different times;
+- the unauthenticated API can throttle large request volumes.
 
-## Consistency limitations
+Registration date means RDW first admission. It is not treated as a vehicle sale
+or purchase event. The current fact tables do not claim to be a historical
+vehicle-change series.
 
-Keyset pagination is deterministic and resilient to changes before the cursor,
-but the public API does not provide a transactionally frozen snapshot:
+## Dimensional model
 
-- records inserted below an already processed key can be missed during that run;
-- source rows can be updated or deleted between identifier and detail requests;
-- matching vehicle and fuel rows are retrieved at slightly different times;
-- the unauthenticated Socrata API can throttle large request volumes.
+All public analytical relations are in the `analytics` schema.
 
-Run metadata makes these limitations observable, but cannot eliminate them.
-For a production-grade historical snapshot, the source would need a versioned
-bulk export or snapshot-isolation capability.
+| Model | Grain |
+|---|---|
+| `dim_vehicle` | One row per salted current-snapshot vehicle key |
+| `dim_vehicle_model` | One row per manufacturer, model, and vehicle-type combination |
+| `dim_registration_date` | One row per represented non-null first-admission date |
+| `dim_powertrain` | One row per EV category and electric/hydrogen/other-fuel flag profile |
+| `fact_vehicle_snapshot` | One row per snapshot ingestion and vehicle key |
+| `fact_vehicle_fuel` | One row per snapshot ingestion, vehicle key, and RDW fuel sequence |
+| `mart_ev_overview` | One denormalized row per vehicle snapshot |
+| `mart_ev_metrics` | One row per fuel, manufacturer, model, registration year, and powertrain category |
+
+Powertrain classification preserves three distinct categories:
+
+- `Battery electric`
+- `Hybrid electric`
+- `Hydrogen electric`
+
+The overview mart is shaped for a future Power BI semantic layer, but Phase 2
+does not include Power BI files, reports, gateways, or cloud deployment.
 
 ## Setup
 
@@ -126,43 +167,38 @@ PowerShell:
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m pip install --no-cache-dir -e ".[dev]"
 Copy-Item .env.example .env
-.\.venv\Scripts\python.exe -m pytest
 ```
 
-All dependencies are intentional:
+Dependencies are intentionally limited:
 
-- `requests`: reliable HTTP timeouts, response validation, and retry handling;
-- `duckdb`: local warehouse, SQL transformations, quality checks, and Parquet;
-- `pandas`: page-sized typed DataFrame registration with DuckDB;
-- `pytest` (development only): automated validation.
+- `requests`: HTTP timeouts, validation, and bounded retry handling;
+- `duckdb`: local staging warehouse and Parquet I/O;
+- `pandas`: page-sized typed registration with DuckDB;
+- `dbt-core` and `dbt-duckdb`: repository-owned SQL modelling and tests;
+- `pytest` and `ruff` in the development extra.
 
-Phase 1 adds no new dependency.
+No global dbt installation or user-global `~/.dbt` profile is used.
 
-## Running snapshots
+## Run the end-to-end pipeline
 
-Exactly one mode must be selected:
-
-- `--fresh`: start a new snapshot and clear the current staging snapshot;
-- `--resume`: continue the last interrupted checkpoint.
-
-Small validation:
+Small snapshot:
 
 ```powershell
 .\.venv\Scripts\dutch-ev.exe --fresh --limit 500 --page-size 250
 ```
 
-Larger bounded run:
+Larger bounded snapshot:
 
 ```powershell
-.\.venv\Scripts\dutch-ev.exe --fresh --limit 10000 --page-size 1000
+.\.venv\Scripts\dutch-ev.exe --fresh --limit 50000 --page-size 1000
 ```
 
-Resume the same run after an interruption:
+Resume the same configured snapshot:
 
 ```powershell
-.\.venv\Scripts\dutch-ev.exe --resume --limit 10000 --page-size 1000
+.\.venv\Scripts\dutch-ev.exe --resume --limit 50000 --page-size 1000
 ```
 
 Complete qualifying snapshot:
@@ -171,104 +207,127 @@ Complete qualifying snapshot:
 .\.venv\Scripts\dutch-ev.exe --fresh --limit 0 --page-size 1000
 ```
 
-`--limit 0` means no limit. `--detail-batch-size` optionally controls how many
-identifiers are included in each matching detail query; its configured default is
-conservative enough to avoid very long URLs.
+`--limit 0` means no matched-vehicle cap. A resume must use the same endpoints,
+data and database locations, limit, page size, detail batch size, and hash salt.
 
-Configuration can be overridden without editing source:
+## Run dbt directly
 
-| Environment variable | Purpose | Default |
-|---|---|---:|
-| `EV_SNAPSHOT_LIMIT` | Matched EV cap; `0` means complete | `10000` |
-| `EV_API_PAGE_SIZE` | Identifier and detail response page size | `1000` |
-| `EV_DETAIL_BATCH_SIZE` | Identifiers per matching detail query | `200` |
-| `EV_REQUEST_TIMEOUT_SECONDS` | HTTP request timeout | `30` |
-| `EV_DATA_DIR` | Raw and Parquet root | `data` |
-| `EV_DATABASE_PATH` | DuckDB warehouse | `data/warehouse/dutch_ev.duckdb` |
-| `EV_STATE_DIR` | Private checkpoint and salt root | `.state` |
-| `EV_HASH_SALT` | Optional stable private hash salt | generated locally |
-| `EV_LOG_LEVEL` | Structured JSON log threshold | `INFO` |
+The profile defaults to the repository-local warehouse. To select another
+warehouse for the current PowerShell session:
 
-## Operational metadata
-
-`meta.ingestion_runs` records:
-
-- completed logical identifier pages and total API page requests;
-- source rows received across identifier, vehicle, and fuel responses;
-- matched vehicle rows and accepted fuel rows;
-- rejected or unmatched rows;
-- duplicate content-addressed payloads;
-- active processing duration, wall-clock elapsed time, and processed rows per
-  second;
-- checkpoint status, resume flag, and resume count;
-- failure details for interrupted runs.
-
-`processed_rows_per_second` is calculated from accepted vehicle rows plus
-accepted fuel rows divided by `active_duration_seconds`. Active duration sums
-time spent in pipeline invocations and excludes downtime between interruption and
-resume. `wall_clock_elapsed_seconds` measures elapsed time from the original
-snapshot start through the latest metadata update, including downtime. These are
-observed operational metrics, not benchmarks.
-
-`meta.ingested_payloads` registers each unique dataset/payload SHA-256 pair.
-Repeated source content is counted as a duplicate and does not create another raw
-file.
-
-## Data model
-
-`staging.vehicles` contains typed vehicle attributes and one salted
-`vehicle_id_hash` per vehicle. `staging.fuels` contains typed fuel attributes,
-keyed by the same hash and fuel sequence.
-
-`analytics.ev_vehicles` contains one row per electric or hydrogen vehicle.
-`analytics.ev_fuel_details` retains all fuels for those vehicles so hybrid
-profiles remain visible. `analytics.ev_metrics` aggregates vehicle count, average
-reported combined CO2, and average net maximum power by fuel type, brand, model,
-and registration year.
-
-Example:
-
-```sql
-SELECT
-    fuel_type,
-    brand,
-    model,
-    registration_year,
-    vehicle_count
-FROM analytics.ev_metrics
-ORDER BY vehicle_count DESC
-LIMIT 50;
+```powershell
+$env:DBT_DUCKDB_PATH = (Resolve-Path data\warehouse\dutch_ev.duckdb).Path
 ```
 
-Additional queries are available in `sql/analytics_examples.sql`.
+Then:
+
+```powershell
+.\.venv\Scripts\dbt.exe deps --project-dir dbt --profiles-dir dbt
+.\.venv\Scripts\dbt.exe debug --project-dir dbt --profiles-dir dbt
+.\.venv\Scripts\dbt.exe parse --project-dir dbt --profiles-dir dbt
+.\.venv\Scripts\dbt.exe build --project-dir dbt --profiles-dir dbt
+```
+
+dbt builds eight public dimensional and mart tables, five staging/intermediate
+views, and runs generic plus singular data tests.
+
+## Inspect dbt lineage and documentation
+
+Generate documentation:
+
+```powershell
+.\.venv\Scripts\dbt.exe docs generate --project-dir dbt --profiles-dir dbt
+.\.venv\Scripts\dbt.exe docs serve --project-dir dbt --profiles-dir dbt
+```
+
+The generated manifest, catalog, run results, compiled SQL, and dbt logs remain
+ignored under `dbt/target/` and `dbt/logs/`.
+
+## Offline fixture and CI
+
+GitHub Actions runs `.github/workflows/ci.yml` for pushes and pull requests
+targeting `main`. It:
+
+1. installs the project in Python 3.11;
+2. runs Ruff and pytest;
+3. creates a temporary synthetic DuckDB fixture;
+4. runs `dbt deps`, `dbt debug`, `dbt parse`, and `dbt build`;
+5. audits tracked and generated files.
+
+The fixture builder is separate from the production CLI:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\build_ci_fixture.py `
+  --database data\ci\fixture.duckdb
+```
+
+It uses explicit `TEST_VEHICLE` examples for electricity-only, petrol and diesel
+hybrids, hydrogen-only, hydrogen with another fuel, and an unexpected valid fuel
+description, including missing optional values. Only salted hashes are written
+to its staging tables. A post-build verifier checks classifications, grains,
+and null-measure preservation. CI never calls the live RDW API.
+
+## Existing Phase 1 warehouse migration
+
+An existing Phase 1 warehouse can be upgraded in place without requesting RDW
+again:
+
+```powershell
+.\.venv\Scripts\dutch-ev.exe --transform-only
+```
+
+The orchestrator removes only the three known Phase 1 analytical tables
+(`ev_vehicles`, `ev_fuel_details`, and `ev_metrics`) and the known dbt-owned
+relations before rebuilding. Arbitrary user relations are not dropped.
+
+`--transform-only` accepts only the already privacy-safe staging tables. It does
+not read raw data, create a checkpoint, or call RDW. It is also safe to repeat
+after a dbt-only migration failure.
+
+For Phase 2 snapshots, use `--resume` after a dbt failure. If an extraction
+checkpoint, raw anchor, configuration fingerprint, database, or private salt is
+missing or inconsistent, extraction resume fails clearly; start a documented
+`--fresh` snapshot rather than mixing states.
+
+## Quality checks
+
+Local validation:
+
+```powershell
+.\.venv\Scripts\ruff.exe check .
+.\.venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\dbt.exe build --project-dir dbt --profiles-dir dbt
+.\.venv\Scripts\python.exe -m pip check
+.\.venv\Scripts\python.exe scripts\audit_tracked_files.py
+```
+
+dbt tests cover:
+
+- model primary keys and fact grain;
+- non-null required keys;
+- fact-to-dimension relationships and orphan fuel facts;
+- accepted powertrain categories;
+- valid first-admission date ranges;
+- non-negative reported numeric measures;
+- staging-to-fact row-count reconciliation;
+- absence of plaintext identifier column names.
+
+Example analytical SQL is available in `sql/analytics_examples.sql`.
 
 ## Privacy
 
-Licence plates are temporarily required to join the public APIs. They may exist
-only in process memory and the local raw zone:
+Plaintext licence plates are temporarily necessary to join the two public APIs.
+They may exist only in process memory and the ignored raw zone.
 
-- `data/`, `.state/`, `.env*`, DuckDB, Parquet, and logs are Git-ignored;
-- raw API pages are content-addressed and remain private;
-- the real salt is generated under `.state/privacy_salt` unless supplied through
-  the environment;
-- checkpoint JSON stores digests and counters, never licence plates;
-- staging, analytics, logs, and Parquet use only salted hashes;
-- structured logs contain counts and operational state, not row identifiers.
+- `.env`, `.state`, `data`, `.venv`, logs, DuckDB, and Parquet are ignored;
+- raw pages are content-addressed and verified before checkpoint recovery;
+- the real hashing salt is generated under `.state/privacy_salt` unless supplied
+  through the ignored environment;
+- staging, dbt models, checkpoints, logs, and Parquet never store plaintext
+  licence plates;
+- repository-local dbt configuration contains no credentials or absolute local
+  drive paths;
+- CI uses clearly synthetic data and writes only privacy-safe hashes.
 
-Do not publish raw files, the warehouse, checkpoints, or the salt. Production use
-would additionally require access controls, retention rules, managed secrets, and
-a formal privacy assessment.
-
-## Tests
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest
-.\.venv\Scripts\python.exe -m pip check
-```
-
-Tests cover keyset and detail pagination, exact partial limits, empty pages,
-bounded retries, multiple logical pages, interruption and resume across durable
-write boundaries, incompatible resume settings, corrupt raw anchors,
-duplicate/non-advancing pages, duplicate payload auditing, idempotent fresh
-reruns, checkpoint privacy, warehouse privacy, Parquet privacy, transformations,
-and data-quality rules.
+Do not publish raw files, the warehouse, checkpoints, logs, generated dbt
+artifacts, Parquet files, or the salt.

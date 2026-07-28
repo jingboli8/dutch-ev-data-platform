@@ -1,0 +1,20 @@
+version: 2
+
+sources:
+  - name: python_staging
+    description: >-
+      Privacy-safe staging tables owned by the Python ingestion pipeline.
+      Plaintext kenteken values never enter these relations.
+    schema: staging
+    tables:
+      - name: vehicles
+        description: One current-snapshot vehicle row per salted vehicle hash.
+      - name: fuels
+        description: One current-snapshot fuel row per vehicle hash and RDW fuel sequence.
+
+  - name: pipeline_metadata
+    description: Operational ingestion metadata owned by Python.
+    schema: meta
+    tables:
+      - name: ingestion_runs
+        description: One row per ingestion attempt and resumable snapshot.
