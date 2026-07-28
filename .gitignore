@@ -1,0 +1,32 @@
+# Project-local environment and secrets
+.venv/
+.env*
+!.env.example
+.state/
+
+# Runtime data and databases (raw data contains licence plates)
+data/
+*.duckdb
+*.duckdb.wal
+
+# Generated logs
+logs/
+*.log
+*.out
+*.err
+
+# Python tooling
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+build/
+dist/
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
