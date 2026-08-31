@@ -1,0 +1,33 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.11.0/schema.json",
+  "name": "8ecec8fcce1a017d3199",
+  "position": {
+    "x": 0,
+    "y": 689.80949601900863,
+    "z": 7005,
+    "height": 30.734086456292466,
+    "width": 1155.943140606111,
+    "tabOrder": 7005
+  },
+  "visual": {
+    "visualType": "textbox",
+    "objects": {
+      "general": [
+        {
+          "properties": {
+            "paragraphs": [
+              {
+                "textRuns": [
+                  {
+                    "value": "Averages use non-null RDW fuel-record values. Coverage is the share of fuel records with reported values. Low coverage limits comparisons. Vehicles may appear under multiple fuel types."
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "drillFilterOtherVisuals": true
+  }
+}

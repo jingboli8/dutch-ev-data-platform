@@ -1,0 +1,22 @@
+model Model
+	culture: en-US
+	defaultPowerBIDataSourceVersion: powerBI_V3
+	sourceQueryCulture: zh-CN
+	valueFilterBehavior: independent
+	dataAccessOptions
+		legacyRedirects
+		returnErrorValuesAsNull
+
+annotation __PBI_TimeIntelligenceEnabled = 1
+
+annotation PBI_ProTooling = ["DevMode"]
+
+annotation PBI_QueryOrder = ["EV Overview","Vehicle Fuel","ParquetRoot"]
+
+ref table 'EV Overview'
+ref table DateTableTemplate_3fc5164e-f2a2-4e15-8402-561d90b6c458
+ref table LocalDateTable_98970bfd-916a-444e-a13c-e122e0219f21
+ref table LocalDateTable_c229def3-ca36-42d2-addf-00ca4cff9c11
+ref table 'Vehicle Fuel'
+
+ref cultureInfo en-US

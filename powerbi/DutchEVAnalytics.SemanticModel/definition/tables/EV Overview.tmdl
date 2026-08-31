@@ -1,0 +1,297 @@
+/// Privacy-safe current RDW EV snapshot at one row per vehicle snapshot.
+/// The table is not a historical time series, and registration dates are not
+/// vehicle-sale events.
+table 'EV Overview'
+	lineageTag: c654e52a-aad0-41d3-acf4-01c0f2a66513
+
+	/// Number of vehicles represented by the current filtered snapshot rows.
+	measure 'Vehicles in Snapshot' = SUM ( 'EV Overview'[vehicle_count] )
+		formatString: #,0
+		displayFolder: Measures
+		lineageTag: e39f49e8-81c2-4c28-8b80-be82e12ca04e
+
+	/// Number of reported fuel-detail rows in the current filter context.
+	measure 'Fuel Records' = COUNTROWS ( 'Vehicle Fuel' )
+		formatString: #,0
+		displayFolder: Measures
+		lineageTag: b9ebe6e9-be9a-4d2d-a5bc-8908639fe6cc
+
+	/// Distinct snapshot vehicles having a fuel record in the current filters.
+	measure 'Vehicles with Selected Fuel' = DISTINCTCOUNT ( 'Vehicle Fuel'[vehicle_snapshot_key] )
+		formatString: #,0
+		displayFolder: Measures
+		lineageTag: b7bbcc14-b937-4a75-ac39-cae76ea6f535
+
+	/// Mean of non-null combined CO2 values reported by RDW; values are not estimated.
+	measure 'Average Reported CO2 (g/km)' = AVERAGE ( 'Vehicle Fuel'[co2_combined_g_km] )
+		formatString: 0.0
+		displayFolder: Measures
+		lineageTag: a984c544-e0e0-49e3-a53b-36290acb60b0
+
+	/// Mean of non-null net maximum power values reported by RDW.
+	measure 'Average Reported Net Power (kW)' = AVERAGE ( 'Vehicle Fuel'[net_max_power_kw] )
+		formatString: 0.0
+		displayFolder: Measures
+		lineageTag: ad199e32-47fe-4241-9fc3-c0efdc1f0176
+
+	/// Share of fuel-detail rows with a non-null reported combined CO2 value.
+	measure 'Reported CO2 Coverage %' =
+			DIVIDE (
+				COALESCE ( COUNT ( 'Vehicle Fuel'[co2_combined_g_km] ), 0 ),
+				[Fuel Records]
+			)
+		formatString: 0.0%
+		displayFolder: Measures
+		lineageTag: 48d471a2-b451-4653-9e75-ec811a4672cb
+
+	/// Share of fuel-detail rows with a non-null reported net power value.
+	measure 'Reported Power Coverage %' =
+			DIVIDE (
+				COALESCE ( COUNT ( 'Vehicle Fuel'[net_max_power_kw] ), 0 ),
+				[Fuel Records]
+			)
+		formatString: 0.0%
+		displayFolder: Measures
+		lineageTag: 35c0e618-0142-443e-ad63-6d10138274ad
+
+	/// Number of snapshot vehicles having more than one reported fuel-detail row.
+	/// Returns zero when vehicles exist but none qualify, and blank when no
+	/// vehicle rows exist in the current filter context.
+	measure 'Vehicles with Multiple Fuel Records' =
+			VAR VehiclesInContext = [Vehicles in Snapshot]
+			VAR QualifyingVehicles =
+				CALCULATE (
+					[Vehicles in Snapshot],
+					KEEPFILTERS ( 'EV Overview'[fuel_record_count] > 1 )
+				)
+			RETURN
+				IF (
+					ISBLANK ( VehiclesInContext ),
+					BLANK (),
+					COALESCE ( QualifyingVehicles, 0 )
+				)
+		formatString: #,0
+		displayFolder: Measures
+		lineageTag: d4c1c010-ad57-4744-85a1-0d63f692fea4
+
+	/// Share of filtered snapshot vehicles having multiple fuel-detail rows.
+	measure 'Multi-fuel Vehicle Share %' =
+			DIVIDE (
+				[Vehicles with Multiple Fuel Records],
+				[Vehicles in Snapshot]
+			)
+		formatString: 0.0%
+		displayFolder: Measures
+		lineageTag: 505c74b4-cf9c-4cbb-b236-34edfd3decb4
+
+	/// Share of vehicles within the selected powertrain-category context.
+	measure 'Powertrain Share %' =
+			DIVIDE (
+				[Vehicles in Snapshot],
+				CALCULATE (
+					[Vehicles in Snapshot],
+					REMOVEFILTERS ( 'EV Overview'[powertrain_category] )
+				)
+			)
+		formatString: 0.0%
+		displayFolder: Measures
+		lineageTag: 35bbad42-b23f-4a0d-a8a1-75f571b8e069
+
+	/// Latest operational snapshot start timestamp in the current filter context.
+	measure 'Snapshot Started At' = MAX ( 'EV Overview'[snapshot_started_at] )
+		formatString: yyyy-MM-dd HH:mm
+		displayFolder: Measures
+		lineageTag: bf1f0ec4-2bd2-42f7-b1a6-daebee49fe2c
+
+	/// Technical key for one vehicle within one ingestion snapshot.
+	column vehicle_snapshot_key
+		dataType: string
+		isHidden
+		lineageTag: 75b4a792-e332-4bd6-9daf-1e8a7c054027
+		summarizeBy: none
+		sourceColumn: vehicle_snapshot_key
+
+		annotation SummarizationSetBy = Automatic
+
+	/// Operational ingestion identifier for the resumable snapshot.
+	column snapshot_ingestion_id
+		dataType: string
+		isHidden
+		lineageTag: 90c819b5-c210-4ff0-9e8c-b1e39a4951a4
+		summarizeBy: none
+		sourceColumn: snapshot_ingestion_id
+
+		annotation SummarizationSetBy = Automatic
+
+	/// Operational start timestamp of the snapshot, not a business event time.
+	column snapshot_started_at
+		dataType: dateTime
+		formatString: General Date
+		lineageTag: c208f9f9-2080-473a-86fe-9ccb4d4ff14a
+		summarizeBy: none
+		sourceColumn: snapshot_started_at
+
+		variation Variation
+			isDefault
+			relationship: e5840e4b-c812-4ee6-bb67-a41d1798c56a
+			defaultHierarchy: LocalDateTable_98970bfd-916a-444e-a13c-e122e0219f21.'Date Hierarchy'
+
+		annotation SummarizationSetBy = Automatic
+
+	/// Salted privacy-safe vehicle key; the plaintext identifier is not present.
+	column vehicle_key
+		dataType: string
+		isHidden
+		lineageTag: 6072c45b-3f3d-4c43-a9c1-97c3aca814cd
+		summarizeBy: none
+		sourceColumn: vehicle_key
+
+		annotation SummarizationSetBy = Automatic
+
+	/// Vehicle manufacturer reported by RDW when available.
+	column brand
+		dataType: string
+		lineageTag: b48be555-41af-4d87-866b-cdd22b7fe0e2
+		summarizeBy: none
+		sourceColumn: brand
+
+		annotation SummarizationSetBy = Automatic
+
+	/// Commercial vehicle model reported by RDW when available.
+	column model
+		dataType: string
+		lineageTag: 91ab96df-c714-4e52-9bb9-d31575842983
+		summarizeBy: none
+		sourceColumn: model
+
+		annotation SummarizationSetBy = Automatic
+
+	/// RDW vehicle type reported for the current snapshot.
+	column vehicle_type
+		dataType: string
+		lineageTag: eaeb5ec0-f43f-4b8c-8afd-a0590769b099
+		summarizeBy: none
+		sourceColumn: vehicle_type
+
+		annotation SummarizationSetBy = Automatic
+
+	/// Primary vehicle colour reported by RDW when available.
+	column primary_colour
+		dataType: string
+		lineageTag: 52b44486-6434-49b5-9c67-ec3a50b52c3d
+		summarizeBy: none
+		sourceColumn: primary_colour
+
+		annotation SummarizationSetBy = Automatic
+
+	/// Secondary vehicle colour reported by RDW when available.
+	column secondary_colour
+		dataType: string
+		lineageTag: 57093e6c-261e-4007-ac13-62ff89733191
+		summarizeBy: none
+		sourceColumn: secondary_colour
+
+		annotation SummarizationSetBy = Automatic
+
+	/// RDW first-admission date; this is not a vehicle-sale date.
+	column registration_date
+		dataType: dateTime
+		formatString: Long Date
+		lineageTag: 8b6c45b9-3910-42cb-a92b-a979c809f2b5
+		summarizeBy: none
+		sourceColumn: registration_date
+
+		variation Variation
+			isDefault
+			relationship: 0112471a-cd09-4c44-801b-74025631158d
+			defaultHierarchy: LocalDateTable_c229def3-ca36-42d2-addf-00ca4cff9c11.'Date Hierarchy'
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	/// Calendar year of the RDW first-admission date when available.
+	column registration_year
+		dataType: int64
+		formatString: 0
+		lineageTag: 4de68b3b-85b1-4b04-868a-a288f8803a27
+		summarizeBy: none
+		sourceColumn: registration_year
+
+		annotation SummarizationSetBy = Automatic
+
+	/// Derived EV category: battery electric, hybrid electric, or hydrogen electric.
+	column powertrain_category
+		dataType: string
+		lineageTag: 0c7cc803-678c-4941-8166-3994055958ac
+		summarizeBy: none
+		sourceColumn: powertrain_category
+
+		annotation SummarizationSetBy = Automatic
+
+	/// Technical helper flag indicating that electricity is reported.
+	column has_electric
+		dataType: boolean
+		isHidden
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		lineageTag: ec0bd7a0-8c75-42c2-9d19-4a5537140a49
+		summarizeBy: none
+		sourceColumn: has_electric
+
+		annotation SummarizationSetBy = Automatic
+
+	/// Technical helper flag indicating that hydrogen is reported.
+	column has_hydrogen
+		dataType: boolean
+		isHidden
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		lineageTag: dd66a359-34d7-4895-b746-7724a7cde8d2
+		summarizeBy: none
+		sourceColumn: has_hydrogen
+
+		annotation SummarizationSetBy = Automatic
+
+	/// Technical helper flag indicating that another fuel is reported.
+	column has_other_fuel
+		dataType: boolean
+		isHidden
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		lineageTag: 01c2272c-228a-4c8d-bb3b-451b4e8f6853
+		summarizeBy: none
+		sourceColumn: has_other_fuel
+
+		annotation SummarizationSetBy = Automatic
+
+	/// Technical row-level count of associated fuel-detail records.
+	column fuel_record_count
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: 4a563094-9f9f-4913-8eff-3b446c68697d
+		summarizeBy: sum
+		sourceColumn: fuel_record_count
+
+		annotation SummarizationSetBy = Automatic
+
+	/// Technical additive row count fixed to one for each vehicle snapshot.
+	column vehicle_count
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: 63638ba0-3ce1-403d-995a-2471fd806d47
+		summarizeBy: sum
+		sourceColumn: vehicle_count
+
+		annotation SummarizationSetBy = Automatic
+
+	partition 'EV Overview' = m
+		mode: import
+		source =
+				let
+				    Source = Parquet.Document(File.Contents(ParquetRoot & "\analytics_mart_ev_overview.parquet"), [Compression=null, LegacyColumnNameEncoding=false, MaxDepth=null])
+				in
+				    Source
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table

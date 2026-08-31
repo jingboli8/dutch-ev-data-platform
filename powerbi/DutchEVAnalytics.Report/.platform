@@ -1,0 +1,11 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Report",
+    "displayName": "DutchEVAnalytics"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "36bcfeb3-9738-4492-815f-7bfb9bb43422"
+  }
+}

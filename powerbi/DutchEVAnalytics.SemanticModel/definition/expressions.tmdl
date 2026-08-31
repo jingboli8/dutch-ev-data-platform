@@ -1,0 +1,6 @@
+expression ParquetRoot = "SET_LOCAL_PARQUET_ROOT" meta [IsParameterQuery=true, Type="Text", IsParameterQueryRequired=true]
+	lineageTag: eaa7ed17-8b96-4659-a5bb-7781c73de738
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Text

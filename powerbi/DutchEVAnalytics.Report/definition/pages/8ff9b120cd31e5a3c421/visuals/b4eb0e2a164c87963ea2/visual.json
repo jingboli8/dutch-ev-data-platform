@@ -1,0 +1,92 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.11.0/schema.json",
+  "name": "b4eb0e2a164c87963ea2",
+  "position": {
+    "x": 409.19489792196424,
+    "y": 68.86713702113471,
+    "z": 1000,
+    "height": 184.40451873775478,
+    "width": 394.42077618908667,
+    "tabOrder": 1000
+  },
+  "visual": {
+    "visualType": "cardVisual",
+    "query": {
+      "queryState": {
+        "Data": {
+          "projections": [
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "EV Overview"
+                    }
+                  },
+                  "Property": "Average Reported CO2 (g/km)"
+                }
+              },
+              "queryRef": "EV Overview.Average Reported CO2 (g/km)",
+              "nativeQueryRef": "Average Reported CO2 (g/km)"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "EV Overview"
+                    }
+                  },
+                  "Property": "Reported CO2 Coverage %"
+                }
+              },
+              "queryRef": "EV Overview.Reported CO2 Coverage %",
+              "nativeQueryRef": "Reported CO2 Coverage %"
+            }
+          ]
+        }
+      },
+      "sortDefinition": {
+        "sort": [
+          {
+            "field": {
+              "Measure": {
+                "Expression": {
+                  "SourceRef": {
+                    "Entity": "EV Overview"
+                  }
+                },
+                "Property": "Average Reported CO2 (g/km)"
+              }
+            },
+            "direction": "Descending"
+          }
+        ],
+        "isDefaultSort": true
+      }
+    },
+    "objects": {
+      "layout": [
+        {
+          "properties": {
+            "orientation": {
+              "expr": {
+                "Literal": {
+                  "Value": "1D"
+                }
+              }
+            },
+            "rowCount": {
+              "expr": {
+                "Literal": {
+                  "Value": "2L"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "drillFilterOtherVisuals": true
+  }
+}

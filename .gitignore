@@ -37,3 +37,6 @@ dbt/.user.yml
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Power BI Desktop local workspace and caches
+powerbi/**/.pbi/

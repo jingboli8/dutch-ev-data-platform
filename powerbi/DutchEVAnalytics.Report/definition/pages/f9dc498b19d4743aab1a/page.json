@@ -1,0 +1,13 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/page/2.1.0/schema.json",
+  "name": "f9dc498b19d4743aab1a",
+  "displayName": "Manufacturer & Model Mix",
+  "displayOption": "FitToPage",
+  "height": 720,
+  "width": 1280,
+  "pageBinding": {
+    "name": "5c633f06d5f22ce20cda",
+    "type": "Default",
+    "parameters": []
+  }
+}

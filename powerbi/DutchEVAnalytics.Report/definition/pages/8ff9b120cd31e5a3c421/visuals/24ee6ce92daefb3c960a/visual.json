@@ -1,0 +1,60 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.11.0/schema.json",
+  "name": "24ee6ce92daefb3c960a",
+  "position": {
+    "x": 1055.2036349993746,
+    "y": 0,
+    "z": 7004,
+    "height": 72.1640364358811,
+    "width": 205.74427409378868,
+    "tabOrder": 7004
+  },
+  "visual": {
+    "visualType": "slicer",
+    "query": {
+      "queryState": {
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "EV Overview"
+                    }
+                  },
+                  "Property": "powertrain_category"
+                }
+              },
+              "queryRef": "EV Overview.powertrain_category",
+              "nativeQueryRef": "Powertrain",
+              "active": true,
+              "displayName": "Powertrain"
+            }
+          ]
+        }
+      }
+    },
+    "objects": {
+      "data": [
+        {
+          "properties": {
+            "mode": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Dropdown'"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "general": [
+        {
+          "properties": {}
+        }
+      ]
+    },
+    "drillFilterOtherVisuals": true
+  }
+}

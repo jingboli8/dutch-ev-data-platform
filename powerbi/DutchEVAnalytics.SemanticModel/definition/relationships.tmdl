@@ -1,0 +1,13 @@
+relationship e5840e4b-c812-4ee6-bb67-a41d1798c56a
+	joinOnDateBehavior: datePartOnly
+	fromColumn: 'EV Overview'.snapshot_started_at
+	toColumn: LocalDateTable_98970bfd-916a-444e-a13c-e122e0219f21.Date
+
+relationship 0112471a-cd09-4c44-801b-74025631158d
+	joinOnDateBehavior: datePartOnly
+	fromColumn: 'EV Overview'.registration_date
+	toColumn: LocalDateTable_c229def3-ca36-42d2-addf-00ca4cff9c11.Date
+
+relationship AutoDetected_306d34ce-1451-4b67-b8ab-b7f6d0a144ca
+	fromColumn: 'Vehicle Fuel'.vehicle_snapshot_key
+	toColumn: 'EV Overview'.vehicle_snapshot_key

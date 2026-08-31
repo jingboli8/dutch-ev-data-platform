@@ -2,13 +2,17 @@
 
 [![CI](https://github.com/jingboli8/dutch-ev-data-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/jingboli8/dutch-ev-data-platform/actions/workflows/ci.yml)
 
-A privacy-aware local data engineering project that turns official Dutch RDW
-open data into a resumable DuckDB ingestion layer and a documented dbt
-dimensional model. Python owns reliable data acquisition and privacy controls;
-dbt owns analytical SQL, lineage, documentation, and SQL-level tests.
+A privacy-aware local data engineering and BI portfolio project that turns
+official Dutch RDW open data into a resumable DuckDB ingestion layer, a
+documented dbt dimensional model, privacy-safe Parquet outputs, and a
+repository-local three-page Power BI Project report. Python owns reliable data
+acquisition and privacy controls; dbt owns analytical SQL, lineage,
+documentation, and SQL-level tests; Power BI provides the local semantic and
+reporting layer.
 
-The project intentionally does not include Power BI, Azure, Spark, Kafka,
-Airflow, Docker, invented performance claims, or claimed business impact.
+The project intentionally does not include Azure, Spark, Kafka, Airflow,
+Docker, invented performance claims, claimed business impact, or a published
+cloud BI deployment.
 
 ## Data sources
 
@@ -35,6 +39,7 @@ flowchart TD
     FACTS["dbt snapshot and fuel facts"]
     MARTS["dbt EV overview and metrics marts"]
     PARQUET["Ignored privacy-safe Parquet"]
+    PBI["Power BI semantic model<br/>three-page local report"]
     CI["GitHub Actions<br/>synthetic offline fixture"]
 
     RDW --> PY
@@ -53,6 +58,7 @@ flowchart TD
     MARTS --> PARQUET
     DIMS --> PARQUET
     FACTS --> PARQUET
+    PARQUET --> PBI
     CI -. no live API .-> STAGE
 ```
 
@@ -76,6 +82,13 @@ dbt owns:
 - reusable EV fuel-profile and snapshot-context transformations;
 - dimensions, facts, and analytical marts;
 - relation and column documentation, lineage, and SQL data-quality tests.
+
+Power BI owns:
+
+- the local semantic presentation over the privacy-safe EV overview and fuel
+  detail Parquet outputs;
+- DAX measures and the single-direction vehicle-to-fuel relationship;
+- three recruiter-facing report pages.
 
 Analytical SQL is not maintained in Python. The architectural rationale is
 recorded in `docs/adr-001-python-dbt-boundary.md`.
@@ -158,8 +171,28 @@ Powertrain classification preserves three distinct categories:
 - `Hybrid electric`
 - `Hydrogen electric`
 
-The overview mart is shaped for a future Power BI semantic layer, but Phase 2
-does not include Power BI files, reports, gateways, or cloud deployment.
+Phase 2 shaped the overview mart for a future Power BI semantic layer and did
+not include Power BI files, reports, gateways, or cloud deployment. Phase 3 now
+adds a repository-local Power BI Project over the published Parquet layer. It
+has not been published to Power BI Service and includes no gateway or cloud
+deployment.
+
+## Power BI report
+
+`powerbi/DutchEVAnalytics.pbip` contains three report pages:
+
+- **Snapshot Overview** summarizes the bounded RDW vehicle snapshot;
+- **Manufacturer & Model Mix** explores brand and model composition;
+- **Fuel & Technical Profile** compares fuel-record counts, reported technical
+  values, and their coverage.
+
+The semantic model imports only `analytics_mart_ev_overview.parquet` and
+`analytics_fact_vehicle_fuel.parquet`. The tracked `ParquetRoot` value is the
+non-working `SET_LOCAL_PARQUET_ROOT` publication placeholder; set it to the
+local Parquet directory in Power BI Desktop before refreshing. The report is a
+local portfolio artifact and has not been published to a cloud service. See the
+[Power BI documentation](powerbi/README.md) for setup, model grain, metric
+interpretation, privacy guidance, and the validation scope.
 
 ## Setup
 
@@ -327,6 +360,10 @@ They may exist only in process memory and the ignored raw zone.
   licence plates;
 - repository-local dbt configuration contains no credentials or absolute local
   drive paths;
+- Power BI `.pbi` workspaces, caches, local settings, and security bindings are
+  ignored;
+- tracked Power BI source uses a portable `ParquetRoot` placeholder instead of
+  a machine-specific path;
 - CI uses clearly synthetic data and writes only privacy-safe hashes.
 
 Do not publish raw files, the warehouse, checkpoints, logs, generated dbt
