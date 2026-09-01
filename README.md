@@ -14,6 +14,48 @@ The project intentionally does not include Azure, Spark, Kafka, Airflow,
 Docker, invented performance claims, claimed business impact, or a published
 cloud BI deployment.
 
+## Dashboard Preview
+
+### Snapshot Overview
+
+This page summarizes the represented vehicle snapshot, its EV powertrain mix,
+leading brands, first-registration-year distribution, and snapshot context.
+
+![Dutch EV Snapshot Overview dashboard](powerbi/images/powerbi-snapshot-overview.png)
+
+### Manufacturer & Model Mix
+
+This page explores vehicle counts and multi-fuel share across brands, models,
+vehicle types, powertrain categories, and first-registration years.
+
+![Manufacturer and Model Mix dashboard](powerbi/images/powerbi-manufacturer-model-mix.png)
+
+### Fuel & Technical Profile
+
+This page distinguishes vehicles from fuel-detail records and shows reported
+CO2, power, and reporting coverage by fuel type.
+
+![Fuel and Technical Profile dashboard](powerbi/images/powerbi-fuel-technical-profile.png)
+
+### Example Snapshot Results
+
+| Metric | Result |
+|---|---:|
+| Vehicles | 50,000 |
+| Fuel records | 94,047 |
+| Hybrid-electric vehicles | 43,856 |
+| Battery-electric vehicles | 6,083 |
+| Hydrogen-electric vehicles | 61 |
+| Reported CO2 coverage | 41.7% |
+| Reported power coverage | 46.8% |
+
+These are example results from one bounded, resumable snapshot. They do not
+represent the full Dutch vehicle fleet, a vehicle-sales dataset, or a
+historical time series. The images are static previews; the dashboard is not
+cloud-hosted or publicly interactive. See the
+[Power BI documentation](powerbi/README.md) for local setup and metric
+interpretation.
+
 ## Data sources
 
 - [Open Data RDW: Registered vehicles](https://opendata.rdw.nl/Voertuigen/Open-Data-RDW-Gekentekende_voertuigen/m9d7-ebf2)

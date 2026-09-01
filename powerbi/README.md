@@ -4,6 +4,17 @@ This directory contains the Power BI Project (PBIP) report and semantic model
 for the Dutch EV Data Platform. The dashboard presents a privacy-safe,
 bounded RDW vehicle snapshot produced by the Python and dbt pipeline.
 
+## Dashboard Preview
+
+These static images preview the three local Power BI report pages. For setup
+and metric definitions, continue with the sections below.
+
+![Dutch EV Snapshot Overview dashboard](images/powerbi-snapshot-overview.png)
+
+![Manufacturer and Model Mix dashboard](images/powerbi-manufacturer-model-mix.png)
+
+![Fuel and Technical Profile dashboard](images/powerbi-fuel-technical-profile.png)
+
 ## Report pages
 
 ### Snapshot Overview
