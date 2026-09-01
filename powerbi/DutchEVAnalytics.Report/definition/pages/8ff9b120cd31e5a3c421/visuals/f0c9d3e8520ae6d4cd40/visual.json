@@ -1,0 +1,107 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.11.0/schema.json",
+  "name": "f0c9d3e8520ae6d4cd40",
+  "position": {
+    "x": 856.54660078577672,
+    "y": 272.05359748217927,
+    "z": 6000,
+    "height": 213.43115594647546,
+    "width": 394.42077618908667,
+    "tabOrder": 6000
+  },
+  "visual": {
+    "visualType": "clusteredColumnChart",
+    "query": {
+      "queryState": {
+        "Category": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Vehicle Fuel"
+                    }
+                  },
+                  "Property": "fuel_type"
+                }
+              },
+              "queryRef": "Vehicle Fuel.fuel_type",
+              "nativeQueryRef": "Vehicle Fuel",
+              "active": true,
+              "displayName": "Vehicle Fuel"
+            }
+          ]
+        },
+        "Y": {
+          "projections": [
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "EV Overview"
+                    }
+                  },
+                  "Property": "Average Reported Net Power (kW)"
+                }
+              },
+              "queryRef": "EV Overview.Average Reported Net Power (kW)",
+              "nativeQueryRef": "Power (kW)",
+              "displayName": "Power (kW)"
+            }
+          ]
+        }
+      },
+      "sortDefinition": {
+        "sort": [
+          {
+            "field": {
+              "Measure": {
+                "Expression": {
+                  "SourceRef": {
+                    "Entity": "EV Overview"
+                  }
+                },
+                "Property": "Average Reported Net Power (kW)"
+              }
+            },
+            "direction": "Descending"
+          }
+        ],
+        "isDefaultSort": true
+      }
+    },
+    "objects": {
+      "categoryAxis": [
+        {
+          "properties": {
+            "showAxisTitle": {
+              "expr": {
+                "Literal": {
+                  "Value": "false"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Average Reported Power by Fuel Type'"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "drillFilterOtherVisuals": true
+  }
+}

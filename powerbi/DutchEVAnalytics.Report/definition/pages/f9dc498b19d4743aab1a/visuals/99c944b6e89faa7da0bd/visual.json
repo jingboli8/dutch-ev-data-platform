@@ -1,0 +1,60 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.11.0/schema.json",
+  "name": "99c944b6e89faa7da0bd",
+  "position": {
+    "x": 660.78285881028808,
+    "y": 0,
+    "z": 5000,
+    "height": 72.1640364358811,
+    "width": 205.74427409378868,
+    "tabOrder": 5000
+  },
+  "visual": {
+    "visualType": "slicer",
+    "query": {
+      "queryState": {
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "EV Overview"
+                    }
+                  },
+                  "Property": "model"
+                }
+              },
+              "queryRef": "EV Overview.model",
+              "nativeQueryRef": "Model",
+              "active": true,
+              "displayName": "Model"
+            }
+          ]
+        }
+      }
+    },
+    "objects": {
+      "data": [
+        {
+          "properties": {
+            "mode": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Dropdown'"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "general": [
+        {
+          "properties": {}
+        }
+      ]
+    },
+    "drillFilterOtherVisuals": true
+  }
+}

@@ -1,0 +1,116 @@
+/// Privacy-safe RDW fuel detail at one row per snapshot, vehicle, and fuel
+/// sequence. Reported technical values remain null when RDW provides no value.
+table 'Vehicle Fuel'
+	lineageTag: ec91d142-d29e-4eeb-b0ce-617aaf75b3c3
+
+	/// Technical key for a fuel-detail row at its documented fact grain.
+	column vehicle_fuel_fact_key
+		dataType: string
+		isHidden
+		lineageTag: 2c9607ff-7bab-405b-926a-454cf97fc940
+		summarizeBy: none
+		sourceColumn: vehicle_fuel_fact_key
+
+		annotation SummarizationSetBy = Automatic
+
+	/// Parent vehicle-snapshot key used by the active model relationship.
+	column vehicle_snapshot_key
+		dataType: string
+		isHidden
+		lineageTag: 3709cdff-ac77-4fa8-9ade-6b837f4bace5
+		summarizeBy: none
+		sourceColumn: vehicle_snapshot_key
+
+		annotation SummarizationSetBy = Automatic
+
+	/// Salted privacy-safe vehicle key; the plaintext identifier is not present.
+	column vehicle_key
+		dataType: string
+		isHidden
+		lineageTag: 2787845e-e144-4537-a8b0-5d09124d661b
+		summarizeBy: none
+		sourceColumn: vehicle_key
+
+		annotation SummarizationSetBy = Automatic
+
+	/// Operational ingestion identifier for the resumable snapshot.
+	column snapshot_ingestion_id
+		dataType: string
+		isHidden
+		lineageTag: 50edb6a5-fb86-4ef2-928c-9e2c93c39134
+		summarizeBy: none
+		sourceColumn: snapshot_ingestion_id
+
+		annotation SummarizationSetBy = Automatic
+
+	/// Technical RDW fuel sequence within a vehicle's fuel profile.
+	column fuel_sequence
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: a2e21b27-d424-4df6-bae8-0845c3a282cf
+		summarizeBy: sum
+		sourceColumn: fuel_sequence
+
+		annotation SummarizationSetBy = Automatic
+
+	/// Fuel description reported by RDW.
+	column fuel_type
+		dataType: string
+		lineageTag: 6d012414-1c45-48aa-ac28-2e892881ee83
+		summarizeBy: none
+		sourceColumn: fuel_type
+
+		annotation SummarizationSetBy = Automatic
+
+	/// Emission classification reported by RDW when available.
+	column emission_code
+		dataType: string
+		lineageTag: d60dcae4-b298-4446-91a9-79c72a9ee466
+		summarizeBy: none
+		sourceColumn: emission_code
+
+		annotation SummarizationSetBy = Automatic
+
+	/// Combined CO2 in grams per kilometre when reported by RDW; not estimated.
+	column co2_combined_g_km
+		dataType: double
+		lineageTag: 31497630-33b7-4c9f-a74d-be40242038db
+		summarizeBy: sum
+		sourceColumn: co2_combined_g_km
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	/// Net maximum power in kilowatts when reported by RDW.
+	column net_max_power_kw
+		dataType: double
+		lineageTag: 5bb02c28-9b9b-4689-97d3-5cd2654e7b17
+		summarizeBy: sum
+		sourceColumn: net_max_power_kw
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	/// Hybrid classification reported by RDW when available.
+	column hybrid_class
+		dataType: string
+		lineageTag: ed267f7b-031d-40e4-8850-8ac14e003a30
+		summarizeBy: none
+		sourceColumn: hybrid_class
+
+		annotation SummarizationSetBy = Automatic
+
+	partition 'Vehicle Fuel' = m
+		mode: import
+		source =
+				let
+				    Source = Parquet.Document(File.Contents(ParquetRoot & "\analytics_fact_vehicle_fuel.parquet"), [Compression=null, LegacyColumnNameEncoding=false, MaxDepth=null])
+				in
+				    Source
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table

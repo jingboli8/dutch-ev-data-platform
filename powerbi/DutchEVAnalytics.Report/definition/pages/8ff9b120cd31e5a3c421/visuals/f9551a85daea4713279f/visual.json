@@ -1,0 +1,174 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.11.0/schema.json",
+  "name": "f9551a85daea4713279f",
+  "position": {
+    "x": 0,
+    "y": 484.91558631039226,
+    "z": 7000,
+    "height": 192.94176497561381,
+    "width": 732.49572720830383,
+    "tabOrder": 7000
+  },
+  "visual": {
+    "visualType": "pivotTable",
+    "query": {
+      "queryState": {
+        "Rows": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Vehicle Fuel"
+                    }
+                  },
+                  "Property": "fuel_type"
+                }
+              },
+              "queryRef": "Vehicle Fuel.fuel_type",
+              "nativeQueryRef": "Fuel Type",
+              "active": true,
+              "displayName": "Fuel Type"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Vehicle Fuel"
+                    }
+                  },
+                  "Property": "hybrid_class"
+                }
+              },
+              "queryRef": "Vehicle Fuel.hybrid_class",
+              "nativeQueryRef": "Hybrid Class",
+              "active": false,
+              "displayName": "Hybrid Class"
+            }
+          ]
+        },
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "EV Overview"
+                    }
+                  },
+                  "Property": "Vehicles with Selected Fuel"
+                }
+              },
+              "queryRef": "EV Overview.Vehicles with Selected Fuel",
+              "nativeQueryRef": "Vehicles with Selected Fuel"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "EV Overview"
+                    }
+                  },
+                  "Property": "Fuel Records"
+                }
+              },
+              "queryRef": "EV Overview.Fuel Records",
+              "nativeQueryRef": "Fuel Records"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "EV Overview"
+                    }
+                  },
+                  "Property": "Reported CO2 Coverage %"
+                }
+              },
+              "queryRef": "EV Overview.Reported CO2 Coverage %",
+              "nativeQueryRef": "Reported CO2 Coverage %"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "EV Overview"
+                    }
+                  },
+                  "Property": "Reported Power Coverage %"
+                }
+              },
+              "queryRef": "EV Overview.Reported Power Coverage %",
+              "nativeQueryRef": "Reported Power Coverage %"
+            }
+          ]
+        }
+      }
+    },
+    "expansionStates": [
+      {
+        "roles": [
+          "Rows"
+        ],
+        "levels": [
+          {
+            "queryRefs": [
+              "Vehicle Fuel.fuel_type"
+            ],
+            "isCollapsed": true,
+            "identityKeys": [
+              {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Vehicle Fuel"
+                    }
+                  },
+                  "Property": "fuel_type"
+                }
+              }
+            ],
+            "isPinned": true
+          },
+          {
+            "queryRefs": [
+              "Vehicle Fuel.hybrid_class"
+            ],
+            "isCollapsed": true,
+            "isPinned": true
+          }
+        ],
+        "root": {}
+      }
+    ],
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Fuel Records & Reporting Coverage'"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "drillFilterOtherVisuals": true
+  }
+}

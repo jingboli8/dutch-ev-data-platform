@@ -1,0 +1,107 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.11.0/schema.json",
+  "name": "0c8312676c62b8719e51",
+  "position": {
+    "x": 422.85449190253871,
+    "y": 272.05359748217927,
+    "z": 5000,
+    "height": 213.43115594647546,
+    "width": 380.7611822085122,
+    "tabOrder": 5000
+  },
+  "visual": {
+    "visualType": "clusteredColumnChart",
+    "query": {
+      "queryState": {
+        "Category": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Vehicle Fuel"
+                    }
+                  },
+                  "Property": "fuel_type"
+                }
+              },
+              "queryRef": "Vehicle Fuel.fuel_type",
+              "nativeQueryRef": "Vehicle Fuel",
+              "active": true,
+              "displayName": "Vehicle Fuel"
+            }
+          ]
+        },
+        "Y": {
+          "projections": [
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "EV Overview"
+                    }
+                  },
+                  "Property": "Average Reported CO2 (g/km)"
+                }
+              },
+              "queryRef": "EV Overview.Average Reported CO2 (g/km)",
+              "nativeQueryRef": "CO₂ (g/km)",
+              "displayName": "CO₂ (g/km)"
+            }
+          ]
+        }
+      },
+      "sortDefinition": {
+        "sort": [
+          {
+            "field": {
+              "Measure": {
+                "Expression": {
+                  "SourceRef": {
+                    "Entity": "EV Overview"
+                  }
+                },
+                "Property": "Average Reported CO2 (g/km)"
+              }
+            },
+            "direction": "Descending"
+          }
+        ],
+        "isDefaultSort": true
+      }
+    },
+    "objects": {
+      "categoryAxis": [
+        {
+          "properties": {
+            "showAxisTitle": {
+              "expr": {
+                "Literal": {
+                  "Value": "false"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Average Reported CO₂ by Fuel Type'"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "drillFilterOtherVisuals": true
+  }
+}

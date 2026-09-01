@@ -1,0 +1,60 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.11.0/schema.json",
+  "name": "ae78d3ca1675094b05c0",
+  "position": {
+    "x": 433.69210888323812,
+    "y": 0,
+    "z": 7001,
+    "height": 72.1640364358811,
+    "width": 205.74427409378868,
+    "tabOrder": 7001
+  },
+  "visual": {
+    "visualType": "slicer",
+    "query": {
+      "queryState": {
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Vehicle Fuel"
+                    }
+                  },
+                  "Property": "fuel_type"
+                }
+              },
+              "queryRef": "Vehicle Fuel.fuel_type",
+              "nativeQueryRef": "Fuel Type",
+              "active": true,
+              "displayName": "Fuel Type"
+            }
+          ]
+        }
+      }
+    },
+    "objects": {
+      "data": [
+        {
+          "properties": {
+            "mode": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Dropdown'"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "general": [
+        {
+          "properties": {}
+        }
+      ]
+    },
+    "drillFilterOtherVisuals": true
+  }
+}
